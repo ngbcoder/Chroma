@@ -93,13 +93,13 @@ Keep this file updated as work progresses. Commit and push frequently (small com
 - [ ] Commit + push
 
 ### M1.4 Media UI (expanded state)
-- [ ] Render collapsed pill (190×36) with clock/idle fallback when no session
-- [ ] Render expanded widget (420×140): controls, progress, artwork
+- [x] Render collapsed pill (190×36) with clock/idle fallback when no session
+- [x] Render expanded widget (420×140): title/artist, progress bar
 - [ ] Play/pause/next/prev buttons hit-testing + commands
 - [ ] Progress extrapolation from last known position + timestamp
 - [ ] Session cycling UI
 - [ ] Ambient artwork glow from dominant color (cache by track identity)
-- [ ] Commit + push
+- [x] Commit + push
 
 ### M1.5 System tray
 - [ ] Tray icon with menu: quit, settings, pause overlay, network feature toggles
