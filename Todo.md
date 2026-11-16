@@ -24,11 +24,11 @@ Keep this file updated as work progresses. Commit and push frequently (small com
 - [x] `internal/ui/window.go`: `Present` — `UpdateLayeredWindow` with premul 32-bit BGRA DIB
 - [x] `internal/ui/window.go`: `WM_MOUSEACTIVATE` handler returning `MA_NOACTIVATE`
 - [x] `internal/ui/window.go`: `ScaleForDPI` helper (device-independent → device px)
-- [ ] `internal/ui/input.go`: `WH_MOUSE_LL` hook or 60 Hz `GetCursorPos` cursor poll within hot-zone
-- [ ] `internal/ui/input.go`: dwell timer (150 ms expand, 400 ms collapse) state machine
+- [x] `internal/ui/input.go`: 60 Hz `GetCursorPos` cursor poll within hot-zone
+- [x] `internal/ui/input.go`: dwell timer (150 ms expand, 400 ms collapse) state machine
 - [ ] `internal/ui/input.go`: click-through verification (alpha-0 pixels pass input)
 - [ ] Manual test: window visible, topmost, no taskbar/Alt+Tab entry, click-through works
-- [x] Commit + push (window spike)
+- [x] Commit + push (input handling)
 
 ### M0.2 Spring animation spike
 - [x] `internal/ui/physics.go`: `Spring` struct (x, v, target, k=280, c=22)
