@@ -17,6 +17,16 @@ var (
 	procGdipDisposeImg     = gdiplusDll.NewProc("GdipDisposeImage")
 )
 
+const winFiletimeToUnixTicks = 116444736000000000
+
+func winrtDateTimeToTime(ticks int64) time.Time {
+	if ticks <= winFiletimeToUnixTicks {
+		return time.Time{}
+	}
+	nsec := (ticks - winFiletimeToUnixTicks) * 100
+	return time.Unix(0, nsec).UTC()
+}
+
 func roInit() {
 	_ = ole.RoInitialize(1)
 }
@@ -186,11 +196,20 @@ func FetchCurrent() (SessionInfo, error) {
 	hr = syscallN(slot(session, 8), uintptr(unsafe.Pointer(session)), uintptr(unsafe.Pointer(&timeline)))
 	if int32(hr) >= 0 && timeline != nil {
 		defer timeline.Release()
-		var end, pos int64
+		var end, pos, updated int64
 		syscallN(slot(timeline, 7), uintptr(unsafe.Pointer(timeline)), uintptr(unsafe.Pointer(&end)))
 		syscallN(slot(timeline, 10), uintptr(unsafe.Pointer(timeline)), uintptr(unsafe.Pointer(&pos)))
+		syscallN(slot(timeline, 11), uintptr(unsafe.Pointer(timeline)), uintptr(unsafe.Pointer(&updated)))
 		info.Duration = time.Duration(end) * 100
 		info.Position = time.Duration(pos) * 100
+		uTime := winrtDateTimeToTime(updated)
+		if uTime.IsZero() {
+			info.PositionUpdatedAt = time.Now()
+		} else {
+			info.PositionUpdatedAt = uTime
+		}
+	} else {
+		info.PositionUpdatedAt = time.Now()
 	}
 
 	var playback *ole.IInspectable
@@ -206,14 +225,15 @@ func FetchCurrent() (SessionInfo, error) {
 }
 
 type SessionInfo struct {
-	SourceApp string
-	Title     string
-	Artist    string
-	Album     string
-	Status    int32
-	Position  time.Duration
-	Duration  time.Duration
-	Thumbnail uintptr
+	SourceApp         string
+	Title             string
+	Artist            string
+	Album             string
+	Status            int32
+	Position          time.Duration
+	Duration          time.Duration
+	PositionUpdatedAt time.Time
+	Thumbnail         uintptr
 }
 
 func FetchCurrentTitle() (string, error) {

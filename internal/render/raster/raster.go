@@ -120,6 +120,8 @@ func (r *Raster) DrawImage(img image.Image, x, y float64) {
 	}
 }
 
+func (r *Raster) DrawBitmap(bmp uintptr, x, y, w, h float64) {}
+
 func (r *Raster) DrawText(text string, x, y float64, s render.TextStyle) {
 	face := basicfont.Face7x13
 	d := font.Drawer{

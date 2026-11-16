@@ -30,7 +30,8 @@ type Layout struct {
 	Width  *Spring
 	Height *Spring
 	Radius *Spring
-	// current target state
+	Scale  *Spring
+	Glow   *Spring
 	Target State
 }
 
@@ -41,6 +42,8 @@ func NewLayout() *Layout {
 		Width:  NewSpring(c.W),
 		Height: NewSpring(c.H),
 		Radius: NewSpring(18),
+		Scale:  NewSpring(1.0),
+		Glow:   NewSpring(0.0),
 		Target: StateCollapsed,
 	}
 }
@@ -60,7 +63,7 @@ func (l *Layout) SizeNow() Size {
 
 // AtRest reports whether all springs are at rest.
 func (l *Layout) AtRest() bool {
-	return l.Width.AtRest() && l.Height.AtRest() && l.Radius.AtRest()
+	return l.Width.AtRest() && l.Height.AtRest() && l.Radius.AtRest() && l.Scale.AtRest() && l.Glow.AtRest()
 }
 
 // Step advances all springs by dt; returns true if still animating.
@@ -68,5 +71,7 @@ func (l *Layout) Step(dt float64) bool {
 	a := l.Width.Step(dt)
 	b := l.Height.Step(dt)
 	c := l.Radius.Step(dt)
-	return a || b || c
+	d := l.Scale.Step(dt)
+	e := l.Glow.Step(dt)
+	return a || b || c || d || e
 }

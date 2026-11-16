@@ -20,11 +20,12 @@ type Theme struct {
 
 // Behavior config.
 type Behavior struct {
-	QuietFeedMode      bool `json:"quiet_feed_mode"`
+	QuietFeedMode       bool `json:"quiet_feed_mode"`
 	DoubleClickThinLine bool `json:"double_click_thin_line"`
-	DwellDelayMs       int  `json:"dwell_delay_ms"`
-	LeaveDelayMs       int  `json:"leave_delay_ms"`
-	HideInFullscreen   bool `json:"hide_in_fullscreen"`
+	DwellDelayMs        int  `json:"dwell_delay_ms"`
+	LeaveDelayMs        int  `json:"leave_delay_ms"`
+	HideInFullscreen    bool `json:"hide_in_fullscreen"`
+	Locked              bool `json:"locked"`
 }
 
 // Network config.
@@ -44,6 +45,9 @@ type Config struct {
 	Version        int        `json:"version"`
 	DockMode       string     `json:"dock_mode"`
 	Monitor        string     `json:"monitor"`
+	PresetLocation string     `json:"preset_location"`
+	WindowX        int        `json:"window_x"`
+	WindowY        int        `json:"window_y"`
 	Theme          Theme      `json:"theme"`
 	Behavior       Behavior   `json:"behavior"`
 	Network        Network    `json:"network"`
@@ -57,9 +61,10 @@ type Config struct {
 
 func defaults() Config {
 	return Config{
-		Version:  2,
-		DockMode: "top_island",
-		Monitor:  "primary",
+		Version:        2,
+		DockMode:       "top_island",
+		Monitor:        "primary",
+		PresetLocation: "top_center",
 		Theme: Theme{
 			DarkMode:     true,
 			AccentColor:  "#0F0F12",
@@ -67,11 +72,12 @@ func defaults() Config {
 			Snappiness:   0.66,
 		},
 		Behavior: Behavior{
-			QuietFeedMode:      true,
+			QuietFeedMode:       true,
 			DoubleClickThinLine: true,
-			DwellDelayMs:       150,
-			LeaveDelayMs:       400,
-			HideInFullscreen:   true,
+			DwellDelayMs:        150,
+			LeaveDelayMs:        400,
+			HideInFullscreen:    true,
+			Locked:              false,
 		},
 		Network: Network{
 			Lyrics:     false,
@@ -129,6 +135,15 @@ func Load(path string) (*Config, error) {
 	if v, ok := raw["monitor"]; ok {
 		json.Unmarshal(v, &c.Monitor)
 	}
+	if v, ok := raw["preset_location"]; ok {
+		json.Unmarshal(v, &c.PresetLocation)
+	}
+	if v, ok := raw["window_x"]; ok {
+		json.Unmarshal(v, &c.WindowX)
+	}
+	if v, ok := raw["window_y"]; ok {
+		json.Unmarshal(v, &c.WindowY)
+	}
 	if v, ok := raw["theme"]; ok {
 		json.Unmarshal(v, &c.Theme)
 	}
@@ -145,6 +160,7 @@ func Load(path string) (*Config, error) {
 	// preserve unknown keys
 	known := map[string]bool{
 		"version": true, "dock_mode": true, "monitor": true,
+		"preset_location": true, "window_x": true, "window_y": true,
 		"theme": true, "behavior": true, "network": true, "quick_launchers": true,
 	}
 	for k, v := range raw {
@@ -162,6 +178,9 @@ func Load(path string) (*Config, error) {
 	}
 	if c.Monitor == "" {
 		c.Monitor = "primary"
+	}
+	if c.PresetLocation == "" {
+		c.PresetLocation = "top_center"
 	}
 	if c.Theme.GlassOpacity == 0 {
 		c.Theme.GlassOpacity = 0.92
@@ -202,6 +221,9 @@ func (c *Config) Save() error {
 	out["version"] = c.Version
 	out["dock_mode"] = c.DockMode
 	out["monitor"] = c.Monitor
+	out["preset_location"] = c.PresetLocation
+	out["window_x"] = c.WindowX
+	out["window_y"] = c.WindowY
 	out["theme"] = c.Theme
 	out["behavior"] = c.Behavior
 	out["network"] = c.Network

@@ -139,6 +139,7 @@ type Window struct {
 	Hwnd   uintptr
 	Width  int
 	Height int
+	Locked bool
 
 	OnClick func(x, y int)
 
@@ -167,7 +168,7 @@ func wndProcCallback(hwnd, msgUint, wParam, lParam uintptr) uintptr {
 	case wmMouseActivate:
 		return maNoActivate
 	case wmLButtonDown:
-		if ok && w != nil {
+		if ok && w != nil && !w.Locked {
 			// record drag offset
 			var pt struct{ X, Y int32 }
 			procGetCursorPos2.Call(uintptr(unsafe.Pointer(&pt)))
@@ -304,6 +305,18 @@ func (w *Window) ensureDIB() error {
 func (w *Window) Bits() uintptr { return w.bits }
 
 func (w *Window) Stride() int { return w.Width * 4 }
+
+// Move sets the window position on screen.
+func (w *Window) Move(x, y int) {
+	procSetWindowPos2.Call(w.Hwnd, 0, uintptr(x), uintptr(y), 0, 0, 0x0010|0x0004) // SWP_NOZORDER|NOSIZE|NOACTIVATE
+}
+
+// Rect returns the window's screen rect (left, top, right, bottom).
+func (w *Window) Rect() (int, int, int, int) {
+	var rc struct{ L, T, R, B int32 }
+	procGetWindowRect2.Call(w.Hwnd, uintptr(unsafe.Pointer(&rc)))
+	return int(rc.L), int(rc.T), int(rc.R), int(rc.B)
+}
 
 // PresentAtCurrent uploads the DIB keeping the window's current position.
 func (w *Window) PresentAtCurrent() error {

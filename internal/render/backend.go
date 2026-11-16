@@ -2,7 +2,7 @@ package render
 
 import "image"
 
-// Color is a premul? stored as straight RGBA 0-255 for API; backends handle premul.
+// Color is stored as straight RGBA 0-255 for API; backends handle premul.
 type Color struct {
 	R, G, B, A uint8
 }
@@ -23,6 +23,7 @@ type Backend interface {
 	Clear()
 	FillRoundedRect(x, y, w, h, r float64, c Color)
 	DrawImage(img image.Image, x, y float64)
+	DrawBitmap(bmp uintptr, x, y, w, h float64)
 	DrawText(text string, x, y float64, s TextStyle)
 	// Blur/Glow are optional; no-op is acceptable.
 	Blur(x, y, w, h, radius float64)

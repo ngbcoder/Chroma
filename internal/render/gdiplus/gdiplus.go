@@ -3,6 +3,7 @@ package gdiplus
 import (
 	"fmt"
 	"image"
+	"math"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -10,6 +11,10 @@ import (
 
 	"github.com/ngbcoder/Chroma/internal/render"
 )
+
+func float32ToUintptr(f float32) uintptr {
+	return uintptr(math.Float32bits(f))
+}
 
 var (
 	gdiplusDll = syscall.NewLazyDLL("gdiplus.dll")
@@ -31,6 +36,7 @@ var (
 	procGdipFillPath                 = gdiplusDll.NewProc("GdipFillPath")
 	procGdipDrawString               = gdiplusDll.NewProc("GdipDrawString")
 	procGdipMeasureString            = gdiplusDll.NewProc("GdipMeasureString")
+	procGdipDrawImageRect            = gdiplusDll.NewProc("GdipDrawImageRectI")
 	procGdipCreateFontFamilyFromName = gdiplusDll.NewProc("GdipCreateFontFamilyFromName")
 	procGdipDeleteFontFamily         = gdiplusDll.NewProc("GdipDeleteFontFamily")
 	procGdipCreateFont               = gdiplusDll.NewProc("GdipCreateFont")
@@ -43,9 +49,9 @@ var (
 	procGdipBitmapLockBits           = gdiplusDll.NewProc("GdipBitmapLockBits")
 	procGdipBitmapUnlockBits         = gdiplusDll.NewProc("GdipBitmapUnlockBits")
 
-	procCreatePrivateFontCollection  = gdiplusDll.NewProc("GdiplusCreatePrivateFontCollection")
-	procDeletePrivateFontCollection  = gdiplusDll.NewProc("GdiplusDeletePrivateFontCollection")
-	procPrivateAddFontFile           = gdiplusDll.NewProc("GdiplusPrivateAddFontFile")
+	procCreatePrivateFontCollection  = gdiplusDll.NewProc("GdipNewPrivateFontCollection")
+	procDeletePrivateFontCollection  = gdiplusDll.NewProc("GdipDeletePrivateFontCollection")
+	procPrivateAddFontFile           = gdiplusDll.NewProc("GdipPrivateAddFontFile")
 
 	procAddFontResourceExW           = gdi32.NewProc("AddFontResourceExW")
 )
@@ -79,18 +85,25 @@ func InitGDIPlus() error {
 }
 
 func registerFonts() {
-	exePath, err := os.Executable()
-	if err != nil {
-		exePath = "."
+	searchPaths := []string{}
+	if wd, err := os.Getwd(); err == nil {
+		searchPaths = append(searchPaths, filepath.Join(wd, "assets", "fonts"))
 	}
-	dir := filepath.Dir(exePath)
+	if exePath, err := os.Executable(); err == nil {
+		searchPaths = append(searchPaths, filepath.Join(filepath.Dir(exePath), "assets", "fonts"))
+	}
+	searchPaths = append(searchPaths, filepath.Join(".", "assets", "fonts"))
+
 	for _, f := range []string{"Doto-Regular.ttf", "BBH-Bogle-Regular.ttf"} {
-		p := filepath.Join(dir, "assets", "fonts", f)
-		if _, err := os.Stat(p); err == nil {
-			u, _ := syscall.UTF16PtrFromString(p)
-			procAddFontResourceExW.Call(uintptr(unsafe.Pointer(u)), 0x10, 0)
-			if fontCollection != 0 {
-				procPrivateAddFontFile.Call(fontCollection, uintptr(unsafe.Pointer(u)))
+		for _, sp := range searchPaths {
+			p := filepath.Join(sp, f)
+			if _, err := os.Stat(p); err == nil {
+				u, _ := syscall.UTF16PtrFromString(p)
+				procAddFontResourceExW.Call(uintptr(unsafe.Pointer(u)), 0x10, 0)
+				if fontCollection != 0 {
+					procPrivateAddFontFile.Call(fontCollection, uintptr(unsafe.Pointer(u)))
+				}
+				break
 			}
 		}
 	}
@@ -119,7 +132,7 @@ func (b *Backend) Begin(w, h int) {
 		procGdipDisposeImage.Call(b.bitmap)
 	}
 	var bmp uintptr
-	procGdipCreateBitmapFromScan0.Call(uintptr(w), uintptr(h), uintptr(w*4), 0x00262006, 0, uintptr(unsafe.Pointer(&bmp)))
+	procGdipCreateBitmapFromScan0.Call(uintptr(w), uintptr(h), uintptr(w*4), 0x0026200a, 0, uintptr(unsafe.Pointer(&bmp)))
 	b.bitmap = bmp
 	var g uintptr
 	procGdipGetImageGraphicsContext.Call(bmp, uintptr(unsafe.Pointer(&g)))
@@ -147,10 +160,10 @@ func (b *Backend) FillRoundedRect(x, y, w, h, rad float64, c render.Color) {
 	fw := float32(w)
 	fh := float32(h)
 
-	procGdipAddPathArc.Call(path, fx, fy, d, d, 180, 90)
-	procGdipAddPathArc.Call(path, fx+fw-d, fy, d, d, 270, 90)
-	procGdipAddPathArc.Call(path, fx+fw-d, fy+fh-d, d, d, 0, 90)
-	procGdipAddPathArc.Call(path, fx, fy+fh-d, d, d, 90, 90)
+	procGdipAddPathArc.Call(path, float32ToUintptr(fx), float32ToUintptr(fy), float32ToUintptr(d), float32ToUintptr(d), float32ToUintptr(180), float32ToUintptr(90))
+	procGdipAddPathArc.Call(path, float32ToUintptr(fx+fw-d), float32ToUintptr(fy), float32ToUintptr(d), float32ToUintptr(d), float32ToUintptr(270), float32ToUintptr(90))
+	procGdipAddPathArc.Call(path, float32ToUintptr(fx+fw-d), float32ToUintptr(fy+fh-d), float32ToUintptr(d), float32ToUintptr(d), float32ToUintptr(0), float32ToUintptr(90))
+	procGdipAddPathArc.Call(path, float32ToUintptr(fx), float32ToUintptr(fy+fh-d), float32ToUintptr(d), float32ToUintptr(d), float32ToUintptr(90), float32ToUintptr(90))
 
 	procGdipClosePathFigure.Call(path)
 	procGdipFillPath.Call(b.graphics, brush, path)
@@ -169,7 +182,13 @@ func (b *Backend) DrawText(text string, x, y float64, s render.TextStyle) {
 	var family uintptr
 	for _, name := range candidates {
 		famName, _ := syscall.UTF16PtrFromString(name)
-		r, _, _ := procGdipCreateFontFamilyFromName.Call(uintptr(unsafe.Pointer(famName)), fontCollection, uintptr(unsafe.Pointer(&family)))
+		if fontCollection != 0 {
+			r, _, _ := procGdipCreateFontFamilyFromName.Call(uintptr(unsafe.Pointer(famName)), fontCollection, uintptr(unsafe.Pointer(&family)))
+			if r == 0 && family != 0 {
+				break
+			}
+		}
+		r, _, _ := procGdipCreateFontFamilyFromName.Call(uintptr(unsafe.Pointer(famName)), 0, uintptr(unsafe.Pointer(&family)))
 		if r == 0 && family != 0 {
 			break
 		}
@@ -187,8 +206,16 @@ func (b *Backend) DrawText(text string, x, y float64, s render.TextStyle) {
 	if size == 0 {
 		size = 12
 	}
+	style := 0
+	if s.Bold {
+		style = 1
+	}
+	unit := 3 // UnitPoint
 	var font uintptr
-	procGdipCreateFont.Call(family, uintptr(unsafe.Pointer(&size)), 0, 0, uintptr(unsafe.Pointer(&font)))
+	procGdipCreateFont.Call(family, float32ToUintptr(size), uintptr(style), uintptr(unit), uintptr(unsafe.Pointer(&font)))
+	if font == 0 {
+		return
+	}
 	defer procGdipDeleteFont.Call(font)
 
 	var brush uintptr
@@ -219,8 +246,8 @@ func (b *Backend) DrawText(text string, x, y float64, s render.TextStyle) {
 	var format uintptr
 	procGdipCreateStringFormat.Call(0, 0, uintptr(unsafe.Pointer(&format)))
 	defer procGdipDeleteStringFormat.Call(format)
-	procGdipSetStringFormatFlags.Call(format, 0x00001000)
-	procGdipSetStringFormatTrimming.Call(format, 1)
+	procGdipSetStringFormatFlags.Call(format, 0x00001000) // StringFormatFlagsNoWrap
+	procGdipSetStringFormatTrimming.Call(format, 3)        // StringTrimmingEllipsisCharacter
 
 	w := s.Width
 	if w <= 0 {
@@ -235,6 +262,20 @@ func (b *Backend) DrawText(text string, x, y float64, s render.TextStyle) {
 func (b *Backend) Blur(x, y, w, h, radius float64) {}
 func (b *Backend) Glow(x, y, w, h, radius float64, c render.Color) {
 	b.FillRoundedRect(x-radius, y-radius, w+2*radius, h+2*radius, radius*2, c)
+}
+
+func (b *Backend) DrawBitmap(bmp uintptr, x, y, w, h float64) {
+	if bmp == 0 {
+		return
+	}
+	procGdipDrawImageRect.Call(
+		b.graphics,
+		bmp,
+		uintptr(int(x)),
+		uintptr(int(y)),
+		uintptr(int(w)),
+		uintptr(int(h)),
+	)
 }
 
 func (b *Backend) Present(dst any) error {
@@ -254,7 +295,7 @@ func (b *Backend) CopyTo(dest []byte) {
 	}
 	var bd bitmapData
 	rect := struct{ X, Y, Width, Height int32 }{0, 0, int32(b.W), int32(b.H)}
-	procGdipBitmapLockBits.Call(b.bitmap, uintptr(unsafe.Pointer(&rect)), 1, 0x00262006, uintptr(unsafe.Pointer(&bd)))
+	procGdipBitmapLockBits.Call(b.bitmap, uintptr(unsafe.Pointer(&rect)), 1, 0x0026200a, uintptr(unsafe.Pointer(&bd)))
 	if bd.Scan0 != 0 {
 		src := unsafe.Slice((*byte)(unsafe.Pointer(bd.Scan0)), b.W*b.H*4)
 		copy(dest, src)

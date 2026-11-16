@@ -14,6 +14,6 @@ func main() {
 		fmt.Println("ERR:", err)
 		return
 	}
-	fmt.Printf("App=%s\nTitle=%s\nArtist=%s\nAlbum=%s\nStatus=%d\nPos=%v\nDur=%v\n",
-		info.SourceApp, info.Title, info.Artist, info.Album, info.Status, info.Position, info.Duration)
+	fmt.Printf("App=%s\nTitle=%s\nArtist=%s\nAlbum=%s\nStatus=%d\nPos=%v\nDur=%v\nUpdated=%v\n",
+		info.SourceApp, info.Title, info.Artist, info.Album, info.Status, info.Position, info.Duration, info.PositionUpdatedAt)
 }
