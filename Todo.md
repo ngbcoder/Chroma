@@ -72,11 +72,11 @@ Keep this file updated as work progresses. Commit and push frequently (small com
 ## Milestone 1 — Core
 
 ### M1.1 App lifecycle + state store
-- [ ] `internal/app/*.go`: root context, worker goroutine management, shutdown sequence
-- [ ] `internal/app/*.go`: state store single-writer, immutable snapshots, channel event bus
-- [ ] `internal/app/*.go`: health states (ok/degraded/unavailable) per subsystem
+- [x] `internal/app/lifecycle.go`: root context, worker goroutine management, shutdown sequence
+- [x] `internal/app/store.go`: state store single-writer, channel event bus, snapshots
+- [x] `internal/app/store.go`: health states (ok/degraded/unavailable) per subsystem via Health event
 - [ ] `internal/app/*.go`: panic recovery + restart with rate limit in workers
-- [ ] Commit + push
+- [x] Commit + push
 
 ### M1.2 Config store
 - [ ] `internal/config/store.go`: load `%APPDATA%\Chroma\config.json`, validate, fill defaults
