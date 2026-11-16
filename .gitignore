@@ -1,0 +1,34 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/chroma
+/chroma.exe
+/dynamic-edge
+/dynamic-edge.exe
+
+# Build output
+bin/
+build/
+dist/
+
+# Test artifacts
+*.test
+*.out
+coverage.*
+
+# Go
+vendor/
+
+# Logs
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temp
+tmp/
+temp/
