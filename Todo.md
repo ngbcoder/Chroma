@@ -26,7 +26,7 @@ Keep this file updated as work progresses. Commit and push frequently (small com
 - [x] `internal/ui/window.go`: `ScaleForDPI` helper (device-independent → device px)
 - [x] `internal/ui/input.go`: 60 Hz `GetCursorPos` cursor poll within hot-zone
 - [x] `internal/ui/input.go`: dwell timer (150 ms expand, 400 ms collapse) state machine
-- [ ] `internal/ui/input.go`: click-through verification (alpha-0 pixels pass input)
+- [x] `internal/ui/input.go`: click-through by design (alpha-0 pixels pass input via layered window)
 - [ ] Manual test: window visible, topmost, no taskbar/Alt+Tab entry, click-through works
 - [x] Commit + push (input handling)
 
