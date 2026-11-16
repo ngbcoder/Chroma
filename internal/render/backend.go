@@ -9,9 +9,11 @@ type Color struct {
 
 // TextStyle configures text rendering.
 type TextStyle struct {
-	Size   float64
-	Color  Color
-	Bold   bool
+	Size      float64
+	Color     Color
+	Bold      bool
+	Alignment int // 0 = Left, 1 = Center, 2 = Right
+	Width     float64
 }
 
 // Backend is the rendering abstraction. All coordinates are in device-independent
