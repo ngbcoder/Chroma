@@ -103,8 +103,13 @@ func main() {
 		}
 	}
 
+	procGetWindowRectMain := syscall.NewLazyDLL("user32.dll").NewProc("GetWindowRect")
 	poller := ui.NewCursorPoller(dwell, func(x, y int) bool {
-		// hot-zone around top-center of primary screen (generous)
+		var rc struct{ L, T, R, B int32 }
+		procGetWindowRectMain.Call(w.Hwnd, uintptr(unsafe.Pointer(&rc)))
+		if rc.R > rc.L {
+			return int32(x) >= rc.L-40 && int32(x) <= rc.R+40 && int32(y) >= rc.T-40 && int32(y) <= rc.B+40
+		}
 		return x >= 400 && x <= 1200 && y >= 0 && y <= 120
 	})
 	poller.Start()
@@ -226,12 +231,21 @@ func main() {
 			if len(title) > 24 {
 				title = title[:21] + "..."
 			}
-			// Vertically center text in collapsed pill (height 36px)
 			textY := cy + (sz.H - 14) / 2
-			r.DrawText(title, cx+14, textY, render.TextStyle{Size: 11, Color: render.RGB(255, 255, 255)})
+			r.DrawText(title, cx, textY, render.TextStyle{
+				Size:      11,
+				Color:     render.RGB(255, 255, 255),
+				Alignment: 1, // Center
+				Width:     sz.W,
+			})
 		} else {
 			textY := cy + (sz.H - 16) / 2
-			r.DrawText(time.Now().Format("15:04"), cx+14, textY, render.TextStyle{Size: 12, Color: render.RGB(255, 255, 255)})
+			r.DrawText(time.Now().Format("15:04"), cx, textY, render.TextStyle{
+				Size:      12,
+				Color:     render.RGB(255, 255, 255),
+				Alignment: 1, // Center
+				Width:     sz.W,
+			})
 		}
 
 		// copy raster buffer to window DIB
