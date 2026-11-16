@@ -2,6 +2,9 @@ package media
 
 import (
 	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -10,11 +13,11 @@ import (
 )
 
 var (
-	shcore                 = syscall.NewLazyDLL("shcore.dll")
-	procCreateStreamOverRA = shcore.NewProc("CreateStreamOverRandomAccessStream")
-	gdiplusDll             = syscall.NewLazyDLL("gdiplus.dll")
+	shcore                   = syscall.NewLazyDLL("shcore.dll")
+	procCreateStreamOverRA   = shcore.NewProc("CreateStreamOverRandomAccessStream")
+	gdiplusDll               = syscall.NewLazyDLL("gdiplus.dll")
 	procGdipCreateBmpFromStm = gdiplusDll.NewProc("GdipCreateBitmapFromStream")
-	procGdipDisposeImg     = gdiplusDll.NewProc("GdipDisposeImage")
+	procGdipDisposeImg       = gdiplusDll.NewProc("GdipDisposeImage")
 )
 
 const winFiletimeToUnixTicks = 116444736000000000
@@ -118,57 +121,189 @@ func DisposeThumbnail(bmp uintptr) {
 	}
 }
 
-func FetchCurrent() (SessionInfo, error) {
-	roInit()
+var (
+	selectedSessionIndex atomic.Int32
+	artworkCacheMu       sync.Mutex
+	artworkCacheKey      string
+	artworkCacheBitmap   uintptr
+	retiredArtwork       = map[uintptr]*time.Timer{}
+)
 
-	ins, err := ole.RoGetActivationFactory(
+func cachedThumbnail(identity string, props *ole.IInspectable) uintptr {
+	artworkCacheMu.Lock()
+	defer artworkCacheMu.Unlock()
+	if identity != "" && identity == artworkCacheKey && artworkCacheBitmap != 0 {
+		return artworkCacheBitmap
+	}
+	bitmap := FetchThumbnail(props)
+	old := artworkCacheBitmap
+	artworkCacheKey, artworkCacheBitmap = identity, bitmap
+	if bitmap == 0 {
+		artworkCacheKey = ""
+	}
+	if old != 0 && old != bitmap {
+		timer := time.AfterFunc(2*time.Second, func() {
+			artworkCacheMu.Lock()
+			_, stillRetired := retiredArtwork[old]
+			delete(retiredArtwork, old)
+			artworkCacheMu.Unlock()
+			if stillRetired {
+				DisposeThumbnail(old)
+			}
+		})
+		retiredArtwork[old] = timer
+	}
+	return bitmap
+}
+
+// ClearThumbnailCache releases artwork resources after the UI has stopped drawing.
+func ClearThumbnailCache() {
+	artworkCacheMu.Lock()
+	bitmaps := make([]uintptr, 0, len(retiredArtwork)+1)
+	if artworkCacheBitmap != 0 {
+		bitmaps = append(bitmaps, artworkCacheBitmap)
+	}
+	for bitmap, timer := range retiredArtwork {
+		timer.Stop()
+		bitmaps = append(bitmaps, bitmap)
+	}
+	artworkCacheKey, artworkCacheBitmap = "", 0
+	retiredArtwork = map[uintptr]*time.Timer{}
+	artworkCacheMu.Unlock()
+	for _, bitmap := range bitmaps {
+		DisposeThumbnail(bitmap)
+	}
+}
+
+func fetchManager() (*ole.IInspectable, error) {
+	roInit()
+	factory, err := ole.RoGetActivationFactory(
 		"Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager",
 		ole.NewGUID("{2050c4ee-11a0-57de-aed7-c97c70338245}"),
 	)
 	if err != nil {
-		return SessionInfo{}, fmt.Errorf("RoGetActivationFactory: %w", err)
+		return nil, fmt.Errorf("RoGetActivationFactory: %w", err)
 	}
-	defer ins.Release()
+	defer factory.Release()
 
 	var asyncOp *ole.IInspectable
-	hr := syscallN(slot(ins, 6), uintptr(unsafe.Pointer(ins)), uintptr(unsafe.Pointer(&asyncOp)))
+	hr := syscallN(slot(factory, 6), uintptr(unsafe.Pointer(factory)), uintptr(unsafe.Pointer(&asyncOp)))
 	if int32(hr) < 0 || asyncOp == nil {
-		return SessionInfo{}, fmt.Errorf("RequestAsync hr=%d", hr)
+		return nil, fmt.Errorf("RequestAsync hr=%d", hr)
 	}
 	defer asyncOp.Release()
 
-	var mgr *ole.IInspectable
+	var manager *ole.IInspectable
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		hr = syscallN(slot(asyncOp, 8), uintptr(unsafe.Pointer(asyncOp)), uintptr(unsafe.Pointer(&mgr)))
+		hr = syscallN(slot(asyncOp, 8), uintptr(unsafe.Pointer(asyncOp)), uintptr(unsafe.Pointer(&manager)))
 		if int32(hr) >= 0 {
 			break
 		}
 		if hr != 0x8000000E {
-			return SessionInfo{}, fmt.Errorf("GetResults(manager) hr=%d", hr)
+			return nil, fmt.Errorf("GetResults(manager) hr=%d", hr)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if mgr == nil {
-		return SessionInfo{}, fmt.Errorf("GetResults(manager) timeout/nil")
+	if manager == nil {
+		return nil, fmt.Errorf("GetResults(manager) timeout/nil")
+	}
+	return manager, nil
+}
+
+func getSessionCollection(manager *ole.IInspectable) (*ole.IInspectable, int, error) {
+	var sessions *ole.IInspectable
+	hr := syscallN(slot(manager, 7), uintptr(unsafe.Pointer(manager)), uintptr(unsafe.Pointer(&sessions)))
+	if int32(hr) < 0 || sessions == nil {
+		return nil, 0, fmt.Errorf("GetSessions hr=%d", hr)
+	}
+	var count uint32
+	hr = syscallN(slot(sessions, 7), uintptr(unsafe.Pointer(sessions)), uintptr(unsafe.Pointer(&count)))
+	if int32(hr) < 0 {
+		sessions.Release()
+		return nil, 0, fmt.Errorf("GetSessions size hr=%d", hr)
+	}
+	return sessions, int(count), nil
+}
+
+func getSessionAt(sessions *ole.IInspectable, index int) (*ole.IInspectable, error) {
+	var session *ole.IInspectable
+	hr := syscallN(slot(sessions, 6), uintptr(unsafe.Pointer(sessions)), uintptr(index), uintptr(unsafe.Pointer(&session)))
+	if int32(hr) < 0 || session == nil {
+		return nil, fmt.Errorf("GetAt(%d) hr=%d", index, hr)
+	}
+	return session, nil
+}
+
+func getCurrentSession(manager *ole.IInspectable) (*ole.IInspectable, error) {
+	var session *ole.IInspectable
+	hr := syscallN(slot(manager, 6), uintptr(unsafe.Pointer(manager)), uintptr(unsafe.Pointer(&session)))
+	if int32(hr) < 0 || session == nil {
+		return nil, fmt.Errorf("GetCurrentSession hr=%d", hr)
+	}
+	return session, nil
+}
+
+func getSelectedSession(manager *ole.IInspectable) (*ole.IInspectable, int, int, error) {
+	sessions, count, err := getSessionCollection(manager)
+	if err != nil {
+		session, currentErr := getCurrentSession(manager)
+		return session, 0, 1, currentErr
+	}
+	defer sessions.Release()
+	if count == 0 {
+		return nil, 0, 0, fmt.Errorf("no active media session")
+	}
+	index := int(selectedSessionIndex.Load())
+	if index < 0 || index >= count {
+		index = 0
+		selectedSessionIndex.Store(0)
+	}
+	session, err := getSessionAt(sessions, index)
+	if err != nil {
+		return nil, 0, count, err
+	}
+	return session, index, count, nil
+}
+
+// CycleSession advances the selected session in the system media session list.
+func CycleSession() (int, int, error) {
+	manager, err := fetchManager()
+	if err != nil {
+		return 0, 0, err
+	}
+	defer manager.Release()
+	sessions, count, err := getSessionCollection(manager)
+	if err != nil {
+		return 0, 0, err
+	}
+	sessions.Release()
+	if count < 2 {
+		return 0, count, fmt.Errorf("only %d active media session(s)", count)
+	}
+	index := (int(selectedSessionIndex.Load()) + 1) % count
+	selectedSessionIndex.Store(int32(index))
+	return index, count, nil
+}
+
+func FetchCurrent() (SessionInfo, error) {
+	mgr, err := fetchManager()
+	if err != nil {
+		return SessionInfo{}, err
 	}
 	defer mgr.Release()
 
-	var session *ole.IInspectable
-	hr = syscallN(slot(mgr, 6), uintptr(unsafe.Pointer(mgr)), uintptr(unsafe.Pointer(&session)))
-	if int32(hr) < 0 {
-		return SessionInfo{}, fmt.Errorf("GetCurrentSession hr=%d", hr)
-	}
-	if session == nil {
-		return SessionInfo{}, fmt.Errorf("no current session")
+	session, sessionIndex, sessionCount, err := getSelectedSession(mgr)
+	if err != nil {
+		return SessionInfo{}, err
 	}
 	defer session.Release()
 
-	info := SessionInfo{}
+	info := SessionInfo{SessionIndex: sessionIndex, SessionCount: sessionCount}
 	info.SourceApp, _ = getHString(session, 6)
 
 	var asyncOp2 *ole.IInspectable
-	hr = syscallN(slot(session, 7), uintptr(unsafe.Pointer(session)), uintptr(unsafe.Pointer(&asyncOp2)))
+	hr := syscallN(slot(session, 7), uintptr(unsafe.Pointer(session)), uintptr(unsafe.Pointer(&asyncOp2)))
 	if int32(hr) >= 0 && asyncOp2 != nil {
 		defer asyncOp2.Release()
 		var props *ole.IInspectable
@@ -188,7 +323,8 @@ func FetchCurrent() (SessionInfo, error) {
 			info.Title, _ = getHString(props, 6)
 			info.Artist, _ = getHString(props, 9)
 			info.Album, _ = getHString(props, 10)
-			info.Thumbnail = FetchThumbnail(props)
+			info.TrackIdentity = strings.Join([]string{info.SourceApp, info.Title, info.Artist, info.Album}, "\x00")
+			info.Thumbnail = cachedThumbnail(info.TrackIdentity, props)
 		}
 	}
 
@@ -226,6 +362,7 @@ func FetchCurrent() (SessionInfo, error) {
 
 type SessionInfo struct {
 	SourceApp         string
+	TrackIdentity     string
 	Title             string
 	Artist            string
 	Album             string
@@ -234,6 +371,8 @@ type SessionInfo struct {
 	Duration          time.Duration
 	PositionUpdatedAt time.Time
 	Thumbnail         uintptr
+	SessionIndex      int
+	SessionCount      int
 }
 
 func FetchCurrentTitle() (string, error) {
@@ -255,48 +394,18 @@ func control(session *ole.IInspectable, slotIdx int) {
 	}
 }
 
-func Play(session *ole.IInspectable)  { control(session, 10) }
-func Pause(session *ole.IInspectable) { control(session, 11) }
-func Next(session *ole.IInspectable)  { control(session, 16) }
-func Prev(session *ole.IInspectable)  { control(session, 17) }
+func Play(session *ole.IInspectable)   { control(session, 10) }
+func Pause(session *ole.IInspectable)  { control(session, 11) }
+func Next(session *ole.IInspectable)   { control(session, 16) }
+func Prev(session *ole.IInspectable)   { control(session, 17) }
 func Toggle(session *ole.IInspectable) { control(session, 20) }
 
 func FetchSession() (*ole.IInspectable, error) {
-	roInit()
-	ins, err := ole.RoGetActivationFactory(
-		"Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager",
-		ole.NewGUID("{2050c4ee-11a0-57de-aed7-c97c70338245}"),
-	)
+	mgr, err := fetchManager()
 	if err != nil {
 		return nil, err
 	}
-	defer ins.Release()
-	var asyncOp *ole.IInspectable
-	hr := syscallN(slot(ins, 6), uintptr(unsafe.Pointer(ins)), uintptr(unsafe.Pointer(&asyncOp)))
-	if int32(hr) < 0 || asyncOp == nil {
-		return nil, fmt.Errorf("RequestAsync hr=%d", hr)
-	}
-	defer asyncOp.Release()
-	var mgr *ole.IInspectable
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		hr = syscallN(slot(asyncOp, 8), uintptr(unsafe.Pointer(asyncOp)), uintptr(unsafe.Pointer(&mgr)))
-		if int32(hr) >= 0 {
-			break
-		}
-		if hr != 0x8000000E {
-			return nil, fmt.Errorf("GetResults hr=%d", hr)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if mgr == nil {
-		return nil, fmt.Errorf("no manager")
-	}
 	defer mgr.Release()
-	var session *ole.IInspectable
-	hr = syscallN(slot(mgr, 6), uintptr(unsafe.Pointer(mgr)), uintptr(unsafe.Pointer(&session)))
-	if int32(hr) < 0 || session == nil {
-		return nil, fmt.Errorf("GetCurrentSession hr=%d", hr)
-	}
-	return session, nil
+	session, _, _, err := getSelectedSession(mgr)
+	return session, err
 }

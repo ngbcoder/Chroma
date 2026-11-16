@@ -18,7 +18,7 @@ func float32ToUintptr(f float32) uintptr {
 
 var (
 	gdiplusDll = syscall.NewLazyDLL("gdiplus.dll")
-	gdi32     = syscall.NewLazyDLL("gdi32.dll")
+	gdi32      = syscall.NewLazyDLL("gdi32.dll")
 
 	procGdiplusStartup               = gdiplusDll.NewProc("GdiplusStartup")
 	procGdiplusShutdown              = gdiplusDll.NewProc("GdiplusShutdown")
@@ -48,12 +48,14 @@ var (
 	procGdipDisposeImage             = gdiplusDll.NewProc("GdipDisposeImage")
 	procGdipBitmapLockBits           = gdiplusDll.NewProc("GdipBitmapLockBits")
 	procGdipBitmapUnlockBits         = gdiplusDll.NewProc("GdipBitmapUnlockBits")
+	procGdipGetImageWidth            = gdiplusDll.NewProc("GdipGetImageWidth")
+	procGdipGetImageHeight           = gdiplusDll.NewProc("GdipGetImageHeight")
 
-	procCreatePrivateFontCollection  = gdiplusDll.NewProc("GdipNewPrivateFontCollection")
-	procDeletePrivateFontCollection  = gdiplusDll.NewProc("GdipDeletePrivateFontCollection")
-	procPrivateAddFontFile           = gdiplusDll.NewProc("GdipPrivateAddFontFile")
+	procCreatePrivateFontCollection = gdiplusDll.NewProc("GdipNewPrivateFontCollection")
+	procDeletePrivateFontCollection = gdiplusDll.NewProc("GdipDeletePrivateFontCollection")
+	procPrivateAddFontFile          = gdiplusDll.NewProc("GdipPrivateAddFontFile")
 
-	procAddFontResourceExW           = gdi32.NewProc("AddFontResourceExW")
+	procAddFontResourceExW = gdi32.NewProc("AddFontResourceExW")
 )
 
 var initialized bool
@@ -247,7 +249,7 @@ func (b *Backend) DrawText(text string, x, y float64, s render.TextStyle) {
 	procGdipCreateStringFormat.Call(0, 0, uintptr(unsafe.Pointer(&format)))
 	defer procGdipDeleteStringFormat.Call(format)
 	procGdipSetStringFormatFlags.Call(format, 0x00001000) // StringFormatFlagsNoWrap
-	procGdipSetStringFormatTrimming.Call(format, 3)        // StringTrimmingEllipsisCharacter
+	procGdipSetStringFormatTrimming.Call(format, 3)       // StringTrimmingEllipsisCharacter
 
 	w := s.Width
 	if w <= 0 {
@@ -276,6 +278,89 @@ func (b *Backend) DrawBitmap(bmp uintptr, x, y, w, h float64) {
 		uintptr(int(w)),
 		uintptr(int(h)),
 	)
+}
+
+// DominantColor returns the most common quantized color in a bitmap.
+func DominantColor(bmp uintptr) (render.Color, error) {
+	if bmp == 0 {
+		return render.Color{}, fmt.Errorf("nil artwork bitmap")
+	}
+	if err := InitGDIPlus(); err != nil {
+		return render.Color{}, err
+	}
+	var width, height uint32
+	if status, _, _ := procGdipGetImageWidth.Call(bmp, uintptr(unsafe.Pointer(&width))); status != 0 {
+		return render.Color{}, fmt.Errorf("GdipGetImageWidth failed: %d", status)
+	}
+	if status, _, _ := procGdipGetImageHeight.Call(bmp, uintptr(unsafe.Pointer(&height))); status != 0 {
+		return render.Color{}, fmt.Errorf("GdipGetImageHeight failed: %d", status)
+	}
+	if width == 0 || height == 0 {
+		return render.Color{}, fmt.Errorf("artwork bitmap has empty dimensions")
+	}
+
+	type bitmapData struct {
+		Width, Height int32
+		Stride        int32
+		PixelFormat   int32
+		Scan0         uintptr
+		Reserved      uintptr
+	}
+	bounds := struct{ X, Y, Width, Height int32 }{Width: int32(width), Height: int32(height)}
+	var data bitmapData
+	status, _, _ := procGdipBitmapLockBits.Call(bmp, uintptr(unsafe.Pointer(&bounds)), 1, 0x0026200a, uintptr(unsafe.Pointer(&data)))
+	if status != 0 {
+		return render.Color{}, fmt.Errorf("GdipBitmapLockBits failed: %d", status)
+	}
+	defer procGdipBitmapUnlockBits.Call(bmp, uintptr(unsafe.Pointer(&data)))
+
+	stride := int(data.Stride)
+	if stride < 0 {
+		stride = -stride
+	}
+	if data.Scan0 == 0 || stride < int(width)*4 {
+		return render.Color{}, fmt.Errorf("invalid artwork bitmap pixel buffer")
+	}
+
+	type colorBucket struct {
+		count int
+		red   int
+		green int
+		blue  int
+	}
+	var buckets [4096]colorBucket
+	stepX, stepY := max(int(width)/64, 1), max(int(height)/64, 1)
+	for y := 0; y < int(height); y += stepY {
+		line := unsafe.Add(unsafe.Pointer(data.Scan0), y*int(data.Stride))
+		pixels := unsafe.Slice((*byte)(line), stride)
+		for x := 0; x < int(width); x += stepX {
+			offset := x * 4
+			blue, green, red, alpha := int(pixels[offset]), int(pixels[offset+1]), int(pixels[offset+2]), int(pixels[offset+3])
+			if alpha < 128 {
+				continue
+			}
+			if red*3+green*6+blue < 240 || red*3+green*6+blue > 2450 {
+				continue
+			}
+			index := (red>>4)<<8 | (green>>4)<<4 | blue>>4
+			bucket := &buckets[index]
+			bucket.count++
+			bucket.red += red
+			bucket.green += green
+			bucket.blue += blue
+		}
+	}
+
+	best := colorBucket{}
+	for _, bucket := range buckets {
+		if bucket.count > best.count {
+			best = bucket
+		}
+	}
+	if best.count == 0 {
+		return render.Color{}, fmt.Errorf("artwork has no usable color samples")
+	}
+	return render.RGB(uint8(best.red/best.count), uint8(best.green/best.count), uint8(best.blue/best.count)), nil
 }
 
 func (b *Backend) Present(dst any) error {

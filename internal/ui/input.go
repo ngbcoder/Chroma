@@ -22,7 +22,7 @@ func getCursorPos() (int, int, bool) {
 
 // DwellController implements the 150ms expand / 400ms collapse debounce.
 type DwellController struct {
-	ExpandDelay  time.Duration
+	ExpandDelay   time.Duration
 	CollapseDelay time.Duration
 
 	mu sync.Mutex
@@ -31,6 +31,7 @@ type DwellController struct {
 	hoverStart time.Time
 	leaveStart time.Time
 	expanded   bool
+	enabled    bool
 
 	OnExpand   func()
 	OnCollapse func()
@@ -40,6 +41,7 @@ func NewDwellController() *DwellController {
 	return &DwellController{
 		ExpandDelay:   150 * time.Millisecond,
 		CollapseDelay: 400 * time.Millisecond,
+		enabled:       true,
 	}
 }
 
@@ -48,6 +50,9 @@ func NewDwellController() *DwellController {
 func (d *DwellController) Update(inHot bool, now time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if !d.enabled {
+		return
+	}
 
 	if inHot {
 		if !d.hovering {
@@ -80,6 +85,41 @@ func (d *DwellController) Expanded() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.expanded
+}
+
+// SetEnabled disables hover transitions while resetting the controller state.
+func (d *DwellController) SetEnabled(enabled bool) {
+	d.mu.Lock()
+	d.enabled = enabled
+	if enabled {
+		d.mu.Unlock()
+		return
+	}
+	d.hovering = false
+	d.hoverStart = time.Time{}
+	d.leaveStart = time.Time{}
+	wasExpanded := d.expanded
+	d.expanded = false
+	onCollapse := d.OnCollapse
+	d.mu.Unlock()
+	if wasExpanded && onCollapse != nil {
+		onCollapse()
+	}
+}
+
+// Reset clears hover state and collapses the controller.
+func (d *DwellController) Reset() {
+	d.mu.Lock()
+	d.hovering = false
+	d.hoverStart = time.Time{}
+	d.leaveStart = time.Time{}
+	wasExpanded := d.expanded
+	d.expanded = false
+	onCollapse := d.OnCollapse
+	d.mu.Unlock()
+	if wasExpanded && onCollapse != nil {
+		onCollapse()
+	}
 }
 
 // CursorPoller polls GetCursorPos at ~60 Hz while running.

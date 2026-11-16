@@ -75,7 +75,7 @@ Keep this file updated as work progresses. Commit and push frequently (small com
 - [x] `internal/app/lifecycle.go`: root context, worker goroutine management, shutdown sequence
 - [x] `internal/app/store.go`: state store single-writer, channel event bus, snapshots
 - [x] `internal/app/store.go`: health states (ok/degraded/unavailable) per subsystem via Health event
-- [ ] `internal/app/*.go`: panic recovery + restart with rate limit in workers
+- [x] `internal/app/*.go`: panic recovery + restart with rate limit in workers
 - [x] Commit + push
 
 ### M1.2 Config store

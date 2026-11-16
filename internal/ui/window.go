@@ -19,12 +19,14 @@ const (
 	cwUseDefault = 0x80000000
 
 	wmDestroy       = 0x0002
+	wmCommand       = 0x0111
 	wmPaint         = 0x000F
 	wmMouseActivate = 0x0021
-	wmLButtonDown  = 0x0201
-	wmMouseMove    = 0x0200
-	wmLButtonUp    = 0x0202
-	wmNCHitTest    = 0x0084
+	wmLButtonDown   = 0x0201
+	wmMouseMove     = 0x0200
+	wmLButtonUp     = 0x0202
+	wmNCHitTest     = 0x0084
+	wmTrayMessage   = 0x8001
 
 	maNoActivate = 3
 
@@ -47,22 +49,22 @@ var (
 	gdi32    = syscall.NewLazyDLL("gdi32.dll")
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
 
-	procRegisterClassExW   = user32.NewProc("RegisterClassExW")
-	procCreateWindowExW    = user32.NewProc("CreateWindowExW")
-	procDefWindowProcW     = user32.NewProc("DefWindowProcW")
-	procShowWindow         = user32.NewProc("ShowWindow")
-	procUpdateLayeredWnd   = user32.NewProc("UpdateLayeredWindow")
-	procGetDC              = user32.NewProc("GetDC")
-	procReleaseDC          = user32.NewProc("ReleaseDC")
-	procDestroyWindow      = user32.NewProc("DestroyWindow")
-	procPostQuitMessage    = user32.NewProc("PostQuitMessage")
-	procGetMessageW        = user32.NewProc("GetMessageW")
-	procTranslateMessage   = user32.NewProc("TranslateMessage")
-	procDispatchMessageW   = user32.NewProc("DispatchMessageW")
-	procLoadCursorW        = user32.NewProc("LoadCursorW")
-	procGetWindowRect2     = user32.NewProc("GetWindowRect")
-	procSetWindowPos2      = user32.NewProc("SetWindowPos")
-	procGetCursorPos2      = user32.NewProc("GetCursorPos")
+	procRegisterClassExW = user32.NewProc("RegisterClassExW")
+	procCreateWindowExW  = user32.NewProc("CreateWindowExW")
+	procDefWindowProcW   = user32.NewProc("DefWindowProcW")
+	procShowWindow       = user32.NewProc("ShowWindow")
+	procUpdateLayeredWnd = user32.NewProc("UpdateLayeredWindow")
+	procGetDC            = user32.NewProc("GetDC")
+	procReleaseDC        = user32.NewProc("ReleaseDC")
+	procDestroyWindow    = user32.NewProc("DestroyWindow")
+	procPostQuitMessage  = user32.NewProc("PostQuitMessage")
+	procGetMessageW      = user32.NewProc("GetMessageW")
+	procTranslateMessage = user32.NewProc("TranslateMessage")
+	procDispatchMessageW = user32.NewProc("DispatchMessageW")
+	procLoadCursorW      = user32.NewProc("LoadCursorW")
+	procGetWindowRect2   = user32.NewProc("GetWindowRect")
+	procSetWindowPos2    = user32.NewProc("SetWindowPos")
+	procGetCursorPos2    = user32.NewProc("GetCursorPos")
 
 	procCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
 	procCreateDIBSection   = gdi32.NewProc("CreateDIBSection")
@@ -141,13 +143,15 @@ type Window struct {
 	Height int
 	Locked bool
 
-	OnClick func(x, y int)
+	OnClick     func(x, y int)
+	OnTrayEvent func(lParam uintptr)
+	OnCommand   func(id uint32)
 
 	// drag state
-	Dragging   bool
-	DragOffX   int
-	DragOffY   int
-	DidDrag    bool
+	Dragging bool
+	DragOffX int
+	DragOffY int
+	DidDrag  bool
 
 	className *uint16
 
@@ -202,6 +206,16 @@ func wndProcCallback(hwnd, msgUint, wParam, lParam uintptr) uintptr {
 			w.Dragging = false
 		}
 		return 0
+	case wmTrayMessage:
+		if ok && w != nil && w.OnTrayEvent != nil {
+			w.OnTrayEvent(lParam)
+		}
+		return 0
+	case wmCommand:
+		if ok && w != nil && w.OnCommand != nil {
+			w.OnCommand(uint32(wParam & 0xFFFF))
+			return 0
+		}
 	case wmDestroy:
 		procPostQuitMessage.Call(0)
 		return 0
@@ -309,6 +323,21 @@ func (w *Window) Stride() int { return w.Width * 4 }
 // Move sets the window position on screen.
 func (w *Window) Move(x, y int) {
 	procSetWindowPos2.Call(w.Hwnd, 0, uintptr(x), uintptr(y), 0, 0, 0x0010|0x0004) // SWP_NOZORDER|NOSIZE|NOACTIVATE
+}
+
+// Hide hides the window without activating another application.
+func (w *Window) Hide() {
+	procShowWindow.Call(w.Hwnd, 0)
+}
+
+// Show restores the window without activating it.
+func (w *Window) Show() {
+	procShowWindow.Call(w.Hwnd, swShowNA)
+}
+
+// Quit ends the current window message loop.
+func (w *Window) Quit() {
+	procPostQuitMessage.Call(0)
 }
 
 // Rect returns the window's screen rect (left, top, right, bottom).

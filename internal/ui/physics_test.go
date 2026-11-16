@@ -47,10 +47,55 @@ func TestLayoutTransition(t *testing.T) {
 			break
 		}
 	}
+
 	if !l.AtRest() {
 		t.Fatal("layout not at rest")
 	}
 	if l.SizeNow().W != 420 || l.SizeNow().H != 140 {
 		t.Fatalf("final size %v", l.SizeNow())
+	}
+}
+
+func TestDockModesSetCollapsedGeometry(t *testing.T) {
+	tests := []struct {
+		mode string
+		size Size
+	}{
+		{mode: "top_island", size: Size{190, 36}},
+		{mode: "top_notch", size: Size{220, 36}},
+		{mode: "thin_line", size: Size{640, 6}},
+		{mode: "edge_left", size: Size{40, 200}},
+		{mode: "edge_right", size: Size{40, 200}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			l := NewLayout()
+			if !l.SetDockMode(tt.mode) {
+				t.Fatal("dock mode rejected")
+			}
+			for i := 0; i < 10000 && !l.AtRest(); i++ {
+				l.Step(1.0 / 60.0)
+			}
+			if got := l.SizeNow(); got != tt.size {
+				t.Fatalf("got geometry %+v, want %+v", got, tt.size)
+			}
+		})
+	}
+}
+
+func TestDockModePositionAnchorsToEdge(t *testing.T) {
+	l := NewLayout()
+	if !l.SetDockMode("edge_right") {
+		t.Fatal("dock mode rejected")
+	}
+	for i := 0; i < 10000 && !l.AtRest(); i++ {
+		l.Step(1.0 / 60.0)
+	}
+	x, y := l.Position(640, 260)
+	if x != 600 || y != 30 {
+		t.Fatalf("edge-right position (%v,%v)", x, y)
+	}
+	if l.SetDockMode("not-a-mode") {
+		t.Fatal("accepted unknown dock mode")
 	}
 }

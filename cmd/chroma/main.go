@@ -1,20 +1,41 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math"
+	"os"
+	"os/exec"
 	"runtime"
 	"syscall"
 	"time"
 	"unsafe"
 
-	"github.com/ngbcoder/Chroma/internal/app"
+	gioapp "gioui.org/app"
+	giosystem "gioui.org/io/system"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
+	"gioui.org/widget"
+	"gioui.org/widget/material"
+
+	chromaapp "github.com/ngbcoder/Chroma/internal/app"
 	"github.com/ngbcoder/Chroma/internal/config"
 	"github.com/ngbcoder/Chroma/internal/media"
 	"github.com/ngbcoder/Chroma/internal/render"
 	"github.com/ngbcoder/Chroma/internal/render/gdiplus"
 	"github.com/ngbcoder/Chroma/internal/render/raster"
+	"github.com/ngbcoder/Chroma/internal/system"
 	"github.com/ngbcoder/Chroma/internal/ui"
+)
+
+const (
+	trayCommandQuit uint32 = iota + 1
+	trayCommandSettings
+	trayCommandPause
+	trayCommandLyrics
+	trayCommandMusicRadar
+	trayCommandStartup
 )
 
 type msgW struct {
@@ -53,9 +74,162 @@ func getScreenSize() (int, int) {
 	return int(cx), int(cy)
 }
 
+func configuredWindowPosition(cfg *config.Config, width, height int) (int, int) {
+	sw, sh := getScreenSize()
+	switch cfg.DockMode {
+	case "edge_left":
+		return 0, (sh - height) / 2
+	case "edge_right":
+		return sw - width, (sh - height) / 2
+	}
+	if cfg.WindowX != 0 || cfg.WindowY != 0 {
+		return cfg.WindowX, cfg.WindowY
+	}
+	switch cfg.PresetLocation {
+	case "top_left":
+		return 20, 10
+	case "top_right":
+		return sw - width - 20, 10
+	case "bottom_center":
+		return (sw - width) / 2, sh - height - 50
+	case "bottom_left":
+		return 20, sh - height - 50
+	case "bottom_right":
+		return sw - width - 20, sh - height - 50
+	default:
+		return (sw - width) / 2, 10
+	}
+}
+
+func launchSettings() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executable: %w", err)
+	}
+	cmd := exec.Command(exe, "--settings")
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start settings process: %w", err)
+	}
+	if err := cmd.Process.Release(); err != nil {
+		return fmt.Errorf("release settings process: %w", err)
+	}
+	return nil
+}
+
+func runSettingsWindow() {
+	cfg, err := config.Load("")
+	if err != nil {
+		fmt.Println("config load:", err)
+		return
+	}
+
+	var darkMode widget.Bool
+	darkMode.Value = cfg.Theme.DarkMode
+	var quietMode widget.Bool
+	quietMode.Value = cfg.Behavior.QuietFeedMode
+
+	dockModes := []string{"top_island", "top_notch", "thin_line", "edge_left", "edge_right"}
+	dockIndex := 0
+	for i, mode := range dockModes {
+		if mode == cfg.DockMode {
+			dockIndex = i
+			break
+		}
+	}
+
+	var dockButton widget.Clickable
+	var saveButton widget.Clickable
+	var closeButton widget.Clickable
+
+	go func() {
+		var w gioapp.Window
+		var ops op.Ops
+		th := material.NewTheme()
+		w.Option(gioapp.Title("Chroma Settings"), gioapp.Size(unit.Dp(420), unit.Dp(240)), gioapp.Decorated(false))
+		for {
+			e := w.Event()
+			switch e := e.(type) {
+			case gioapp.DestroyEvent:
+				return
+			case gioapp.FrameEvent:
+				gtx := gioapp.NewContext(&ops, e)
+				if dockButton.Clicked(gtx) {
+					dockIndex = (dockIndex + 1) % len(dockModes)
+					cfg.DockMode = dockModes[dockIndex]
+				}
+				if saveButton.Clicked(gtx) {
+					cfg.Theme.DarkMode = darkMode.Value
+					cfg.Behavior.QuietFeedMode = quietMode.Value
+					if err := cfg.Save(); err != nil {
+						fmt.Println("save config:", err)
+					}
+					w.Perform(giosystem.ActionClose)
+					return
+				}
+				if closeButton.Clicked(gtx) {
+					w.Perform(giosystem.ActionClose)
+					return
+				}
+
+				layout.Flex{Axis: layout.Vertical, Spacing: layout.SpaceSides}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return material.H6(th, "Chroma Settings").Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Top: unit.Dp(12), Bottom: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return material.CheckBox(th, &darkMode, "Dark mode").Layout(gtx)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return material.CheckBox(th, &quietMode, "Quiet feed mode").Layout(gtx)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											return material.Body1(th, "Dock mode: "+dockModes[dockIndex]).Layout(gtx)
+										}),
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											return material.Button(th, &dockButton, "Cycle").Layout(gtx)
+										}),
+									)
+								}),
+							)
+						})
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEnd}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return material.Button(th, &closeButton, "Close").Layout(gtx)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return material.Button(th, &saveButton, "Save").Layout(gtx)
+							}),
+						)
+					}),
+				)
+				e.Frame(gtx.Ops)
+			}
+		}
+	}()
+	gioapp.Main()
+}
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--settings" {
+		runSettingsWindow()
+		return
+	}
+
 	runtime.LockOSThread()
 	fmt.Println("Starting Chroma...")
+
+	startedAt := time.Now()
+	cfg, err := config.Load("")
+	if err != nil {
+		fmt.Println("config load:", err)
+		return
+	}
 
 	w, err := ui.NewWindow(640, 260)
 	if err != nil {
@@ -65,42 +239,36 @@ func main() {
 	fmt.Println("Window created successfully, HWND:", w.Hwnd)
 	defer w.Destroy()
 
-	cfg, _ := config.Load("")
 	w.Locked = cfg.Behavior.Locked
-
-	if cfg.WindowX == 0 && cfg.WindowY == 0 {
-		sw, sh := getScreenSize()
-		winW, winH := 640, 260
-		var px, py int
-		switch cfg.PresetLocation {
-		case "top_left":
-			px, py = 20, 10
-		case "top_right":
-			px, py = sw - winW - 20, 10
-		case "bottom_center":
-			px, py = (sw - winW) / 2, sh - winH - 50
-		case "bottom_left":
-			px, py = 20, sh - winH - 50
-		case "bottom_right":
-			px, py = sw - winW - 20, sh - winH - 50
-		default: // "top_center"
-			px, py = (sw - winW) / 2, 10
-		}
-		w.Move(px, py)
+	if err := system.AddTrayIcon(w.Hwnd, "Chroma"); err != nil {
+		fmt.Println("tray icon:", err)
 	} else {
-		w.Move(cfg.WindowX, cfg.WindowY)
+		defer func() {
+			if err := system.RemoveTrayIcon(w.Hwnd); err != nil {
+				fmt.Println("remove tray icon:", err)
+			}
+		}()
 	}
+
+	x, y := configuredWindowPosition(cfg, w.Width, w.Height)
+	w.Move(x, y)
 	defer func() {
 		l, t, _, _ := w.Rect()
 		cfg.WindowX = l
 		cfg.WindowY = t
-		cfg.Save()
+		if err := cfg.Save(); err != nil {
+			fmt.Println("save config on shutdown:", err)
+		}
 	}()
 
-	store := app.NewStore()
+	store := chromaapp.NewStore()
 	defer store.Close()
 
 	layout := ui.NewLayout()
+	if !layout.SetDockMode(cfg.DockMode) {
+		fmt.Println("invalid dock mode:", cfg.DockMode)
+		return
+	}
 	dwell := ui.NewDwellController()
 	dwell.ExpandDelay = time.Duration(cfg.Behavior.DwellDelayMs) * time.Millisecond
 	dwell.CollapseDelay = time.Duration(cfg.Behavior.LeaveDelayMs) * time.Millisecond
@@ -109,25 +277,113 @@ func main() {
 		layout.Width.SetParams(k, 22)
 		layout.Height.SetParams(k, 22)
 	}
-	cfg.Watch(func() {
-		if newCfg, err := config.Load(""); err == nil {
-			dwell.ExpandDelay = time.Duration(newCfg.Behavior.DwellDelayMs) * time.Millisecond
-			dwell.CollapseDelay = time.Duration(newCfg.Behavior.LeaveDelayMs) * time.Millisecond
-			if newCfg.Theme.Snappiness > 0 {
-				k := newCfg.Theme.Snappiness * 420.0
-				layout.Width.SetParams(k, 22)
-				layout.Height.SetParams(k, 22)
-			}
+	configChanged := make(chan struct{}, 1)
+	cfgWatcher, err := cfg.Watch(func() {
+		select {
+		case configChanged <- struct{}{}:
+		default:
 		}
 	})
+	if err != nil {
+		fmt.Println("config watcher:", err)
+	} else {
+		defer func() {
+			if err := cfgWatcher.Close(); err != nil {
+				fmt.Println("close config watcher:", err)
+			}
+		}()
+		go func() {
+			for err := range cfgWatcher.Errors() {
+				fmt.Println("config watcher:", err)
+			}
+		}()
+	}
 
+	dwellEvents := make(chan bool, 4)
 	dwell.OnExpand = func() {
-		layout.GoTo(ui.StateExpanded)
-		layout.Glow.SetTarget(1.0)
+		select {
+		case dwellEvents <- true:
+		default:
+		}
 	}
 	dwell.OnCollapse = func() {
-		layout.GoTo(ui.StateCollapsed)
-		layout.Glow.SetTarget(0.0)
+		select {
+		case dwellEvents <- false:
+		default:
+		}
+	}
+
+	paused := false
+	w.OnTrayEvent = func(lParam uintptr) {
+		if uint32(lParam) == system.TrayLeftDoubleClick {
+			if err := launchSettings(); err != nil {
+				fmt.Println("launch settings:", err)
+			}
+			return
+		}
+		if uint32(lParam) != system.TrayRightButtonUp && uint32(lParam) != system.TrayContextMenu {
+			return
+		}
+
+		startupEnabled, err := system.StartupEnabled()
+		if err != nil {
+			fmt.Println("read startup setting:", err)
+		}
+		selected, err := system.ShowTrayMenu(w.Hwnd, []system.TrayMenuItem{
+			{ID: trayCommandSettings, Label: "Settings"},
+			{ID: trayCommandPause, Label: "Pause overlay", Checked: paused},
+			{ID: trayCommandLyrics, Label: "Enable lyrics", Checked: cfg.Network.Lyrics},
+			{ID: trayCommandMusicRadar, Label: "Enable Music Radar", Checked: cfg.Network.MusicRadar},
+			{ID: trayCommandStartup, Label: "Start with Windows", Checked: startupEnabled},
+			{Separator: true},
+			{ID: trayCommandQuit, Label: "Quit Chroma"},
+		})
+		if err != nil {
+			fmt.Println("show tray menu:", err)
+			return
+		}
+		if selected == 0 {
+			return
+		}
+		switch selected {
+		case trayCommandQuit:
+			w.Quit()
+		case trayCommandSettings:
+			if err := launchSettings(); err != nil {
+				fmt.Println("launch settings:", err)
+			}
+		case trayCommandPause:
+			paused = !paused
+			if paused {
+				dwell.SetEnabled(false)
+				w.Hide()
+				layout.GoTo(ui.StateCollapsed)
+				layout.Glow.SetTarget(0)
+			} else {
+				dwell.SetEnabled(true)
+				w.Show()
+			}
+		case trayCommandLyrics, trayCommandMusicRadar:
+			updated, err := config.Load(cfg.Path())
+			if err != nil {
+				fmt.Println("load config for network toggle:", err)
+				return
+			}
+			if selected == trayCommandLyrics {
+				updated.Network.Lyrics = !updated.Network.Lyrics
+			} else {
+				updated.Network.MusicRadar = !updated.Network.MusicRadar
+			}
+			if err := updated.Save(); err != nil {
+				fmt.Println("save network setting:", err)
+				return
+			}
+			cfg = updated
+		case trayCommandStartup:
+			if err := system.SetStartupEnabled(!startupEnabled); err != nil {
+				fmt.Println("update startup setting:", err)
+			}
+		}
 	}
 
 	w.OnClick = func(x, y int) {
@@ -135,8 +391,14 @@ func main() {
 		if sz.W < 300 {
 			return
 		}
-		cx := (float64(w.Width) - sz.W) / 2
-		cy := (float64(w.Height) - sz.H) / 2
+		cx, cy := layout.Position(w.Width, w.Height)
+		if float64(y) >= cy+72 && float64(y) <= cy+92 &&
+			float64(x) >= cx+sz.W-96 && store.State().Media.SessionCount > 1 {
+			if _, _, err := media.CycleSession(); err != nil {
+				fmt.Println("cycle media session:", err)
+			}
+			return
+		}
 		by := cy + 92
 		if float64(y) < by || float64(y) > by+28 {
 			return
@@ -188,11 +450,13 @@ func main() {
 	if err == nil {
 		r = gdiR
 	} else {
+		fmt.Println("GDI+ renderer unavailable, using raster:", err)
 		r = raster.New()
 	}
 
-	lc := app.NewLifecycle()
-	go func() {
+	defer media.ClearThumbnailCache()
+	lc := chromaapp.NewLifecycle()
+	lc.Go(func(ctx context.Context) {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -200,13 +464,14 @@ func main() {
 			case <-ticker.C:
 				info, err := media.FetchCurrent()
 				if err != nil {
-					store.Send(app.MediaUpdate(app.MediaState{Available: false}))
-					store.Send(app.Health("smtc", "degraded"))
+					store.Send(chromaapp.MediaUpdate(chromaapp.MediaState{Available: false}))
+					store.Send(chromaapp.Health("smtc", "degraded"))
 					continue
 				}
-				store.Send(app.MediaUpdate(app.MediaState{
+				store.Send(chromaapp.MediaUpdate(chromaapp.MediaState{
 					Available:         true,
 					SourceApp:         info.SourceApp,
+					TrackIdentity:     info.TrackIdentity,
 					Title:             info.Title,
 					Artist:            info.Artist,
 					Album:             info.Album,
@@ -215,25 +480,90 @@ func main() {
 					Duration:          info.Duration,
 					PositionUpdatedAt: info.PositionUpdatedAt,
 					Thumbnail:         info.Thumbnail,
+					SessionIndex:      info.SessionIndex,
+					SessionCount:      info.SessionCount,
 				}))
-				store.Send(app.Health("smtc", "ok"))
-			case <-lc.Context().Done():
+				store.Send(chromaapp.Health("smtc", "ok"))
+			case <-ctx.Done():
 				return
 			}
 		}
-	}()
+	})
 	defer lc.Shutdown()
 
 	// Main loop: pump messages + drive frames
 	quit := false
 	firstFrame := true
+	lastTrackIdentity := ""
+	lastArtworkBitmap := uintptr(0)
+	accentColor := render.RGB(100, 180, 255)
+	hasAccentColor := false
 	for !quit {
 		if pumpMessages() {
 			quit = true
 			break
 		}
+		select {
+		case <-configChanged:
+			newCfg, err := config.Load(cfg.Path())
+			if err != nil {
+				fmt.Println("reload config:", err)
+			} else {
+				oldDockMode := cfg.DockMode
+				cfg = newCfg
+				w.Locked = cfg.Behavior.Locked
+				if !layout.SetDockMode(cfg.DockMode) {
+					fmt.Println("invalid dock mode:", cfg.DockMode)
+				}
+				dwell.ExpandDelay = time.Duration(cfg.Behavior.DwellDelayMs) * time.Millisecond
+				dwell.CollapseDelay = time.Duration(cfg.Behavior.LeaveDelayMs) * time.Millisecond
+				if cfg.Theme.Snappiness > 0 {
+					k := cfg.Theme.Snappiness * 420.0
+					layout.Width.SetParams(k, 22)
+					layout.Height.SetParams(k, 22)
+				}
+				if oldDockMode != cfg.DockMode {
+					x, y := configuredWindowPosition(cfg, w.Width, w.Height)
+					w.Move(x, y)
+				}
+			}
+		default:
+		}
+		for {
+			select {
+			case expanded := <-dwellEvents:
+				if paused {
+					continue
+				}
+				if expanded {
+					layout.GoTo(ui.StateExpanded)
+					layout.Glow.SetTarget(1)
+				} else {
+					layout.GoTo(ui.StateCollapsed)
+					layout.Glow.SetTarget(0)
+				}
+			default:
+				goto dwellEventsDrained
+			}
+		}
+	dwellEventsDrained:
 
 		state := store.State()
+		if state.Media.TrackIdentity != lastTrackIdentity ||
+			(state.Media.Thumbnail != 0 && state.Media.Thumbnail != lastArtworkBitmap) {
+			lastTrackIdentity = state.Media.TrackIdentity
+			lastArtworkBitmap = state.Media.Thumbnail
+			hasAccentColor = false
+			if state.Media.Thumbnail != 0 {
+				color, err := gdiplus.DominantColor(state.Media.Thumbnail)
+				if err != nil {
+					fmt.Println("read artwork color:", err)
+				} else {
+					accentColor = color
+					hasAccentColor = true
+				}
+			}
+		}
 
 		// advance layout
 		layout.Step(1.0 / 60.0)
@@ -242,8 +572,7 @@ func main() {
 		r.Begin(w.Width, w.Height)
 		r.Clear()
 		sz := layout.SizeNow()
-		cx := (float64(w.Width) - sz.W) / 2
-		cy := (float64(w.Height) - sz.H) / 2
+		cx, cy := layout.Position(w.Width, w.Height)
 
 		glowVal := layout.Glow.Value()
 		if state.Media.Status == 4 {
@@ -253,17 +582,22 @@ func main() {
 		}
 		if glowVal > 0.02 {
 			blurRadius := 20.0
+			glowColor := render.RGBA(100, 180, 255, uint8(30*glowVal))
+			if hasAccentColor {
+				glowColor = render.RGBA(accentColor.R, accentColor.G, accentColor.B, uint8(30*glowVal))
+			}
 			if sz.W > 300 {
 				blurRadius = 28.0
-				r.Glow(cx-4, cy-4, sz.W+8, sz.H+8, blurRadius, render.RGBA(100, 180, 255, uint8(30*glowVal)))
+				r.Glow(cx-4, cy-4, sz.W+8, sz.H+8, blurRadius, glowColor)
 			} else {
-				r.Glow(cx-2, cy-2, sz.W+4, sz.H+4, blurRadius, render.RGBA(100, 180, 255, uint8(40*glowVal)))
+				glowColor.A = uint8(40 * glowVal)
+				r.Glow(cx-2, cy-2, sz.W+4, sz.H+4, blurRadius, glowColor)
 			}
 		}
 
 		// background pill
 		r.FillRoundedRect(cx, cy, sz.W, sz.H, layout.Radius.Value(), render.RGBA(15, 15, 18, 220))
-		if state.Media.Available && sz.W > 300 {
+		if state.Media.Available && sz.W > 300 && sz.H > 20 {
 			if state.Media.Thumbnail != 0 {
 				r.DrawBitmap(state.Media.Thumbnail, cx+16, cy+18, 64, 64)
 			} else {
@@ -280,6 +614,13 @@ func main() {
 			album := state.Media.Album
 			if album != "" && album != artist {
 				r.DrawText(album, cx+92, cy+62, render.TextStyle{Size: 10, Color: render.RGB(130, 130, 145), Width: sz.W - 108})
+			}
+			if state.Media.SessionCount > 1 {
+				sessionLabel := fmt.Sprintf("%d / %d  ›", state.Media.SessionIndex+1, state.Media.SessionCount)
+				r.FillRoundedRect(cx+sz.W-96, cy+72, 84, 18, 9, render.RGBA(28, 28, 36, 230))
+				r.DrawText(sessionLabel, cx+sz.W-92, cy+76, render.TextStyle{
+					Size: 9, Color: render.RGB(190, 200, 220), Alignment: 1, Width: 76,
+				})
 			}
 
 			pos := state.Media.Position
@@ -326,7 +667,7 @@ func main() {
 				r.FillRoundedRect(cx+16, cy+sz.H-16, sz.W-32, 4, 2, render.RGBA(255, 255, 255, 60))
 				r.FillRoundedRect(cx+16, cy+sz.H-16, (sz.W-32)*frac, 4, 2, render.RGB(100, 180, 255))
 			}
-		} else if state.Media.Available {
+		} else if state.Media.Available && sz.H > 20 {
 			// Collapsed pill: Show Album Art Thumbnail + Title & Artist stacked inside pill
 			textX := cx + 12.0
 			textW := sz.W - 24.0
@@ -337,7 +678,7 @@ func main() {
 				r.DrawBitmap(state.Media.Thumbnail, cx+8.0, thumbY, thumbSize, thumbSize)
 				textX = cx + 38.0
 				textW = sz.W - 46.0
-			} else {
+			} else if sz.H > 20 {
 				r.FillRoundedRect(cx+8.0, thumbY, thumbSize, thumbSize, 5, render.RGBA(40, 40, 52, 255))
 				r.FillRoundedRect(cx+15.0, thumbY+7.0, 10, 10, 2, render.RGBA(70, 70, 95, 200))
 				textX = cx + 38.0
@@ -384,8 +725,11 @@ func main() {
 		}
 		var presentErr error
 		if firstFrame {
-			presentErr = w.Present(100, 50)
+			presentErr = w.PresentAtCurrent()
 			firstFrame = false
+			if presentErr == nil {
+				fmt.Printf("First frame presented in %s\n", time.Since(startedAt).Round(time.Millisecond))
+			}
 		} else {
 			presentErr = w.PresentAtCurrent()
 		}

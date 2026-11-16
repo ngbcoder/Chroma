@@ -2,20 +2,23 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
 
 // Theme config.
 type Theme struct {
-	DarkMode    bool    `json:"dark_mode"`
-	AccentColor string  `json:"accent_color"`
+	DarkMode     bool    `json:"dark_mode"`
+	AccentColor  string  `json:"accent_color"`
 	GlassOpacity float64 `json:"glass_opacity"`
-	Snappiness  float64 `json:"snappiness"`
+	Snappiness   float64 `json:"snappiness"`
 }
 
 // Behavior config.
@@ -53,7 +56,6 @@ type Config struct {
 	Network        Network    `json:"network"`
 	QuickLaunchers []Launcher `json:"quick_launchers"`
 
-	// extra preserves unknown keys.
 	extra map[string]json.RawMessage
 	path  string
 	mu    sync.Mutex
@@ -77,28 +79,24 @@ func defaults() Config {
 			DwellDelayMs:        150,
 			LeaveDelayMs:        400,
 			HideInFullscreen:    true,
-			Locked:              false,
 		},
-		Network: Network{
-			Lyrics:     false,
-			MusicRadar: false,
-		},
-		QuickLaunchers: []Launcher{
-			{Name: "Terminal", Path: "wt.exe"},
-		},
+		QuickLaunchers: []Launcher{{Name: "Terminal", Path: "wt.exe"}},
 	}
 }
 
-// ConfigPath returns %APPDATA%\Chroma\config.json.
+// ConfigPath returns the application config file path.
 func ConfigPath() string {
-	appdata := os.Getenv("APPDATA")
-	if appdata == "" {
-		appdata = "."
+	root := os.Getenv("APPDATA")
+	if root == "" {
+		root, _ = os.UserConfigDir()
 	}
-	return filepath.Join(appdata, "Chroma", "config.json")
+	if root == "" {
+		root = "."
+	}
+	return filepath.Join(root, "Chroma", "config.json")
 }
 
-// Load reads config from path (or default path).
+// Load reads, validates, and fills defaults for the config at path.
 func Load(path string) (*Config, error) {
 	if path == "" {
 		path = ConfigPath()
@@ -109,72 +107,69 @@ func Load(path string) (*Config, error) {
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			// write defaults
-			if err := c.Save(); err != nil {
-				return nil, err
-			}
-			return &c, nil
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("read config %q: %w", path, err)
 		}
-		return nil, err
+		if err := c.Save(); err != nil {
+			return nil, err
+		}
+		return &c, nil
 	}
 
-	// unmarshal into map to preserve unknown keys
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
-
-	// known fields
-	if v, ok := raw["version"]; ok {
-		json.Unmarshal(v, &c.Version)
-	}
-	if v, ok := raw["dock_mode"]; ok {
-		json.Unmarshal(v, &c.DockMode)
-	}
-	if v, ok := raw["monitor"]; ok {
-		json.Unmarshal(v, &c.Monitor)
-	}
-	if v, ok := raw["preset_location"]; ok {
-		json.Unmarshal(v, &c.PresetLocation)
-	}
-	if v, ok := raw["window_x"]; ok {
-		json.Unmarshal(v, &c.WindowX)
-	}
-	if v, ok := raw["window_y"]; ok {
-		json.Unmarshal(v, &c.WindowY)
-	}
-	if v, ok := raw["theme"]; ok {
-		json.Unmarshal(v, &c.Theme)
-	}
-	if v, ok := raw["behavior"]; ok {
-		json.Unmarshal(v, &c.Behavior)
-	}
-	if v, ok := raw["network"]; ok {
-		json.Unmarshal(v, &c.Network)
-	}
-	if v, ok := raw["quick_launchers"]; ok {
-		json.Unmarshal(v, &c.QuickLaunchers)
+	if raw == nil {
+		return nil, errors.New("invalid config: expected a JSON object")
 	}
 
-	// preserve unknown keys
-	known := map[string]bool{
-		"version": true, "dock_mode": true, "monitor": true,
-		"preset_location": true, "window_x": true, "window_y": true,
-		"theme": true, "behavior": true, "network": true, "quick_launchers": true,
+	fields := map[string]any{
+		"version":         &c.Version,
+		"dock_mode":       &c.DockMode,
+		"monitor":         &c.Monitor,
+		"preset_location": &c.PresetLocation,
+		"window_x":        &c.WindowX,
+		"window_y":        &c.WindowY,
+		"theme":           &c.Theme,
+		"behavior":        &c.Behavior,
+		"network":         &c.Network,
+		"quick_launchers": &c.QuickLaunchers,
 	}
-	for k, v := range raw {
-		if !known[k] {
-			c.extra[k] = v
+	for key, dst := range fields {
+		if value, ok := raw[key]; ok {
+			if err := json.Unmarshal(value, dst); err != nil {
+				return nil, fmt.Errorf("invalid config field %q: %w", key, err)
+			}
 		}
 	}
 
-	// validate / fill defaults for zero values
+	for key, value := range raw {
+		if _, known := fields[key]; !known {
+			c.extra[key] = value
+		}
+	}
+
+	if err := c.validateAndFillDefaults(); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (c *Config) validateAndFillDefaults() error {
 	if c.Version == 0 {
 		c.Version = 2
 	}
+	if c.Version != 2 {
+		return fmt.Errorf("unsupported config version %d", c.Version)
+	}
 	if c.DockMode == "" {
 		c.DockMode = "top_island"
+	}
+	switch c.DockMode {
+	case "top_island", "top_notch", "thin_line", "edge_left", "edge_right":
+	default:
+		return fmt.Errorf("invalid dock_mode %q", c.DockMode)
 	}
 	if c.Monitor == "" {
 		c.Monitor = "primary"
@@ -182,14 +177,33 @@ func Load(path string) (*Config, error) {
 	if c.PresetLocation == "" {
 		c.PresetLocation = "top_center"
 	}
+	switch c.PresetLocation {
+	case "top_center", "top_left", "top_right", "bottom_center", "bottom_left", "bottom_right":
+	default:
+		return fmt.Errorf("invalid preset_location %q", c.PresetLocation)
+	}
+	if c.Theme.AccentColor == "" {
+		c.Theme.AccentColor = "#0F0F12"
+	}
+	if len(c.Theme.AccentColor) != 7 || c.Theme.AccentColor[0] != '#' {
+		return fmt.Errorf("invalid theme.accent_color %q: expected #RRGGBB", c.Theme.AccentColor)
+	}
+	for _, ch := range c.Theme.AccentColor[1:] {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", ch) {
+			return fmt.Errorf("invalid theme.accent_color %q: expected #RRGGBB", c.Theme.AccentColor)
+		}
+	}
 	if c.Theme.GlassOpacity == 0 {
 		c.Theme.GlassOpacity = 0.92
+	}
+	if c.Theme.GlassOpacity < 0 || c.Theme.GlassOpacity > 1 {
+		return fmt.Errorf("theme.glass_opacity must be between 0 and 1")
 	}
 	if c.Theme.Snappiness == 0 {
 		c.Theme.Snappiness = 0.66
 	}
-	if c.Theme.AccentColor == "" {
-		c.Theme.AccentColor = "#0F0F12"
+	if c.Theme.Snappiness < 0 || c.Theme.Snappiness > 1 {
+		return fmt.Errorf("theme.snappiness must be between 0 and 1")
 	}
 	if c.Behavior.DwellDelayMs == 0 {
 		c.Behavior.DwellDelayMs = 150
@@ -197,11 +211,13 @@ func Load(path string) (*Config, error) {
 	if c.Behavior.LeaveDelayMs == 0 {
 		c.Behavior.LeaveDelayMs = 400
 	}
-
-	return &c, nil
+	if c.Behavior.DwellDelayMs < 0 || c.Behavior.LeaveDelayMs < 0 {
+		return errors.New("behavior dwell and leave delays cannot be negative")
+	}
+	return nil
 }
 
-// Save writes config atomically (temp + rename).
+// Save writes config atomically, retaining unrecognized top-level keys.
 func (c *Config) Save() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -209,14 +225,17 @@ func (c *Config) Save() error {
 	if c.path == "" {
 		c.path = ConfigPath()
 	}
-	if err := os.MkdirAll(filepath.Dir(c.path), 0755); err != nil {
+	if err := c.validateAndFillDefaults(); err != nil {
 		return err
 	}
+	dir := filepath.Dir(c.path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
 
-	// build output map preserving unknown keys
 	out := map[string]any{}
-	for k, v := range c.extra {
-		out[k] = v
+	for key, value := range c.extra {
+		out[key] = value
 	}
 	out["version"] = c.Version
 	out["dock_mode"] = c.DockMode
@@ -231,47 +250,143 @@ func (c *Config) Save() error {
 
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("encode config: %w", err)
 	}
-
-	tmp := c.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
+	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create config temp file: %w", err)
 	}
-	return os.Rename(tmp, c.path)
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write config temp file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync config temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close config temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, c.path); err != nil {
+		return fmt.Errorf("replace config file: %w", err)
+	}
+	return nil
 }
 
-// Watch watches the config file for changes and calls onChange.
-func (c *Config) Watch(onChange func()) error {
+// ConfigWatcher owns a config directory watcher and its event goroutine.
+type ConfigWatcher struct {
+	watcher *fsnotify.Watcher
+	stop    chan struct{}
+	done    chan struct{}
+	errors  chan error
+	once    sync.Once
+}
+
+// Watch watches for config replacement or edits and invokes onChange after a
+// short debounce. Close the returned watcher to release its resources.
+func (c *Config) Watch(onChange func()) (*ConfigWatcher, error) {
+	path := c.Path()
+	if path == "" {
+		path = ConfigPath()
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve config path: %w", err)
+	}
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("create config watcher: %w", err)
 	}
-	dir := filepath.Dir(c.path)
-	if err := watcher.Add(dir); err != nil {
+	if err := watcher.Add(filepath.Dir(absPath)); err != nil {
 		watcher.Close()
-		return err
+		return nil, fmt.Errorf("watch config directory: %w", err)
 	}
-	go func() {
-		for {
-			select {
-			case ev, ok := <-watcher.Events:
-				if !ok {
-					return
-				}
-				if ev.Name == c.path && (ev.Op&fsnotify.Write == fsnotify.Write || ev.Op&fsnotify.Create == fsnotify.Create) {
-					if onChange != nil {
-						onChange()
-					}
-				}
-			case _, ok := <-watcher.Errors:
-				if !ok {
-					return
-				}
-			}
+	cw := &ConfigWatcher{
+		watcher: watcher,
+		stop:    make(chan struct{}),
+		done:    make(chan struct{}),
+		errors:  make(chan error, 1),
+	}
+	go cw.run(absPath, onChange)
+	return cw, nil
+}
+
+func (w *ConfigWatcher) run(configPath string, onChange func()) {
+	defer close(w.done)
+	defer close(w.errors)
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
 		}
 	}()
-	return nil
+	var timerC <-chan time.Time
+	for {
+		select {
+		case ev, ok := <-w.watcher.Events:
+			if !ok {
+				return
+			}
+			eventPath, err := filepath.Abs(ev.Name)
+			if err != nil || !samePath(eventPath, configPath) {
+				continue
+			}
+			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) == 0 {
+				continue
+			}
+			if timer == nil {
+				timer = time.NewTimer(100 * time.Millisecond)
+			} else {
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(100 * time.Millisecond)
+			}
+			timerC = timer.C
+		case err, ok := <-w.watcher.Errors:
+			if !ok {
+				return
+			}
+			select {
+			case w.errors <- err:
+			default:
+			}
+		case <-timerC:
+			timerC = nil
+			if onChange != nil {
+				onChange()
+			}
+		case <-w.stop:
+			return
+		}
+	}
+}
+
+func samePath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if os.PathSeparator == '\\' {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// Errors reports the first watcher error, if any.
+func (w *ConfigWatcher) Errors() <-chan error { return w.errors }
+
+// Close stops the watcher and waits for its event goroutine to exit.
+func (w *ConfigWatcher) Close() error {
+	var err error
+	w.once.Do(func() {
+		close(w.stop)
+		err = w.watcher.Close()
+		<-w.done
+	})
+	return err
 }
 
 // Path returns the config file path.
