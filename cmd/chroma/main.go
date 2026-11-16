@@ -147,6 +147,12 @@ func main() {
 	// Main loop: pump messages + drive frames
 	start := time.Now()
 	_ = start
+	// progress extrapolation state
+	var basePos time.Duration
+	var baseTime time.Time
+	var lastTitle string
+	var lastPolledPos time.Duration
+
 	quit := false
 	firstFrame := true
 	for !quit {
@@ -156,6 +162,22 @@ func main() {
 		}
 
 		state := store.State()
+
+		// update base on track change or seek
+		if state.Media.Available {
+			if state.Media.Title != lastTitle {
+				lastTitle = state.Media.Title
+				basePos = state.Media.Position
+				baseTime = time.Now()
+				lastPolledPos = state.Media.Position
+			} else if state.Media.Position != lastPolledPos {
+				// seeked
+				basePos = state.Media.Position
+				baseTime = time.Now()
+				lastPolledPos = state.Media.Position
+			}
+		}
+
 		// advance layout
 		layout.Step(1.0 / 60.0)
 
@@ -170,12 +192,15 @@ func main() {
 		if state.Media.Available {
 			r.DrawText(state.Media.Title, cx+12, cy+18, render.TextStyle{Size: 12, Color: render.RGB(255, 255, 255)})
 			r.DrawText(state.Media.Artist, cx+12, cy+36, render.TextStyle{Size: 11, Color: render.RGB(180, 180, 180)})
-			// extrapolate position while playing
-			pos := state.Media.Position
-			if state.Media.Status == 3 && !state.Media.PositionUpdatedAt.IsZero() {
-				pos += time.Since(state.Media.PositionUpdatedAt)
+			// extrapolate position (Chrome reports stale position, so use local timer)
+			pos := basePos
+			if state.Media.Available && state.Media.Status != 2 && state.Media.Status != 0 {
+				pos += time.Since(baseTime)
 				if pos > state.Media.Duration {
 					pos = state.Media.Duration
+				}
+				if pos < 0 {
+					pos = 0
 				}
 			}
 			if state.Media.Duration > 0 {
