@@ -12,12 +12,12 @@ Keep this file updated as work progresses. Commit and push frequently (small com
 ## Milestone 0 — Spikes (decision gates)
 
 ### M0.0 Repo scaffold
-- [ ] Create `go.mod` with module path `github.com/ngbcoder/Chroma`, go 1.27
-- [ ] Create directory tree per Design.md §13
-- [ ] Add embedded `app.manifest` (DPI awareness v2, supported OS GUIDs, no elevation)
-- [ ] Add `.gitignore` for Go (binaries, build artifacts, logs)
+- [x] Create `go.mod` with module path `github.com/ngbcoder/Chroma`, go 1.27
+- [x] Create directory tree per Design.md §13
+- [x] Add embedded `app.manifest` (DPI awareness v2, supported OS GUIDs, no elevation)
+- [x] Add `.gitignore` for Go (binaries, build artifacts, logs)
 - [x] Add `Todo.md`
-- [ ] Commit + push scaffold
+- [x] Commit + push scaffold
 
 ### M0.1 Layered window spike
 - [ ] `internal/ui/window.go`: `NewWindow(cfg) (*Window, error)` — create HWND with `WS_POPUP | WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`
@@ -31,14 +31,14 @@ Keep this file updated as work progresses. Commit and push frequently (small com
 - [ ] Commit + push
 
 ### M0.2 Spring animation spike
-- [ ] `internal/ui/physics.go`: `Spring` struct (x, v, target, k=280, c=22)
-- [ ] `internal/ui/physics.go`: `Step(dt float64)` semi-implicit Euler with 1/240 s substep accumulator
-- [ ] `internal/ui/physics.go`: `Retarget(newTarget)` preserving velocity
-- [ ] `internal/ui/physics.go`: `AtRest() bool` threshold 0.05 (distance + velocity)
-- [ ] `internal/ui/physics.go`: snap-to-target when at rest, stop requesting frames
-- [ ] `internal/ui/layout.go`: state sizes (collapsed 190×36, expanded 420×140, thin line h=6, edge blade, volume flyout)
-- [ ] Unit tests: spring integration, retarget smoothness, rest detection
-- [ ] Commit + push
+- [x] `internal/ui/physics.go`: `Spring` struct (x, v, target, k=280, c=22)
+- [x] `internal/ui/physics.go`: `Step(dt float64)` semi-implicit Euler with 1/240 s substep accumulator
+- [x] `internal/ui/physics.go`: `Retarget`/`SetTarget(newTarget)` preserving velocity
+- [x] `internal/ui/physics.go`: `AtRest() bool` threshold 0.05 (distance + velocity)
+- [x] `internal/ui/physics.go`: snap-to-target when at rest, stop requesting frames
+- [x] `internal/ui/layout.go`: state sizes (collapsed 190×36, expanded 420×140, thin line h=6, edge blade, volume flyout)
+- [x] Unit tests: spring integration, retarget smoothness, rest detection
+- [x] Commit + push
 
 ### M0.3 Render backend spike
 - [ ] `internal/render/backend.go`: `Backend` interface (`Begin`, `Clear`, `FillRoundedRect`, `DrawImage`, `DrawText`, `Present`)
