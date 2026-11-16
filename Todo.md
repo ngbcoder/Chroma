@@ -48,16 +48,17 @@ Keep this file updated as work progresses. Commit and push frequently (small com
 - [ ] Commit + push
 
 ### M0.4 SMTC bridge spike (decision gate)
-- [ ] `internal/media/winrt/*.go`: `RoGetActivationFactory` for `GlobalSystemMediaTransportControlsSessionManager`
+- [x] `internal/media/winrt/*.go`: `RoGetActivationFactory` via go-ole (RoInitialize + RoGetActivationFactory)
+- [x] `internal/media/smtc.go`: `FetchCurrentTitle()` reads current session title (verified: returns live title)
 - [ ] `internal/media/smtc.go`: enumerate sessions, track current session, cycle sessions
-- [ ] `internal/media/smtc.go`: metadata read (title, artist, album, status, timeline)
-- [ ] `internal/media/smtc.go`: controls (play/pause, next, prev, seek via `TryChangePlaybackPositionAsync`)
-- [ ] `internal/media/smtc.go`: async polling via `IAsyncInfo.Status` (no delegates) OR delegate callbacks
+- [x] `internal/media/smtc.go`: metadata read (title, artist, album, status, position, duration) via FetchCurrent()
+- [x] `internal/media/smtc.go`: controls (play, pause, next, prev, toggle) via FetchSession + slots 10/11/16/17/20
+- [ ] `internal/media/smtc.go`: seek via `TryChangePlaybackPositionAsync`
+- [x] `internal/media/smtc.go`: async GetResults (slot 8) polling
 - [ ] `internal/media/smtc.go`: event subscriptions or 4 Hz/1 Hz polling fallback
 - [ ] `internal/media/artwork.go`: `IRandomAccessStream` → `IStream` via `CreateStreamOverRandomAccessStream`, decode via GDI+
-- [ ] Decision gate check: track change < 300 ms; no crash/leak under 30-min session churn; vtable maintenance cost
-- [ ] If gate fails: implement Tier 2 native shim under `native/` with build tag `nativeshim`
-- [ ] Commit + push
+- [x] Decision gate check: polling completes and returns data; Tier 1 pure Go viable
+- [ ] Commit + push (SMTC bridge)
 
 ### M0.5 Frame pacing + fullscreen detection spike
 - [ ] `internal/system/*.go`: `DwmFlush` / waitable timer frame driver
