@@ -41,11 +41,11 @@ Keep this file updated as work progresses. Commit and push frequently (small com
 - [x] Commit + push
 
 ### M0.3 Render backend spike
-- [ ] `internal/render/backend.go`: `Backend` interface (`Begin`, `Clear`, `FillRoundedRect`, `DrawImage`, `DrawText`, `Present`)
+- [x] `internal/render/backend.go`: `Backend` interface (`Begin`, `Clear`, `FillRoundedRect`, `DrawImage`, `DrawText`, `Present`)
 - [ ] `internal/render/gdiplus/*.go`: GDI+ flat API via lazy DLL, `PixelFormat32bppPARGB`
-- [ ] `internal/render/raster/*.go`: pure-Go rasterizer into DIB memory (for tests/golden images)
+- [x] `internal/render/raster/*.go`: pure-Go rasterizer into DIB memory (for tests/golden images)
 - [ ] Golden-image test harness comparing raster output to reference PNGs
-- [ ] Commit + push
+- [x] Commit + push
 
 ### M0.4 SMTC bridge spike (decision gate)
 - [x] `internal/media/winrt/*.go`: `RoGetActivationFactory` via go-ole (RoInitialize + RoGetActivationFactory)
