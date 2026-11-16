@@ -208,7 +208,8 @@ func (b *Backend) DrawText(text string, x, y float64, s render.TextStyle) {
 			uintptr(unsafe.Pointer(&layoutRect)),
 			0, // string format
 			uintptr(unsafe.Pointer(&box)),
-			0, 0,
+			0,
+			0,
 		)
 		if box.Width > 0 {
 			x = x + (s.Width-float64(box.Width))/2
