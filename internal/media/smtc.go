@@ -9,6 +9,14 @@ import (
 	"github.com/go-ole/go-ole"
 )
 
+var (
+	shcore                 = syscall.NewLazyDLL("shcore.dll")
+	procCreateStreamOverRA = shcore.NewProc("CreateStreamOverRandomAccessStream")
+	gdiplusDll             = syscall.NewLazyDLL("gdiplus.dll")
+	procGdipCreateBmpFromStm = gdiplusDll.NewProc("GdipCreateBitmapFromStream")
+	procGdipDisposeImg     = gdiplusDll.NewProc("GdipDisposeImage")
+)
+
 func roInit() {
 	_ = ole.RoInitialize(1)
 }
@@ -32,6 +40,74 @@ func getHString(ins *ole.IInspectable, idx int) (string, error) {
 	return hstr.String(), nil
 }
 
+func FetchThumbnail(props *ole.IInspectable) uintptr {
+	if props == nil {
+		return 0
+	}
+	var thumbRef *ole.IInspectable
+	// props slot 15 = get_Thumbnail
+	hr := syscallN(slot(props, 15), uintptr(unsafe.Pointer(props)), uintptr(unsafe.Pointer(&thumbRef)))
+	if int32(hr) < 0 || thumbRef == nil {
+		return 0
+	}
+	defer thumbRef.Release()
+
+	// thumbRef slot 6 = OpenReadAsync -> IAsyncOperation<IRandomAccessStreamWithContentType>
+	var asyncOp *ole.IInspectable
+	hr = syscallN(slot(thumbRef, 6), uintptr(unsafe.Pointer(thumbRef)), uintptr(unsafe.Pointer(&asyncOp)))
+	if int32(hr) < 0 || asyncOp == nil {
+		return 0
+	}
+	defer asyncOp.Release()
+
+	// GetResults slot 8
+	var raStream *ole.IInspectable
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		hr = syscallN(slot(asyncOp, 8), uintptr(unsafe.Pointer(asyncOp)), uintptr(unsafe.Pointer(&raStream)))
+		if int32(hr) >= 0 {
+			break
+		}
+		if hr != 0x8000000E {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if raStream == nil {
+		return 0
+	}
+	defer raStream.Release()
+
+	iidIStream := ole.NewGUID("{0000000c-0000-0000-c000-000000000046}")
+	var iStream *ole.IUnknown
+	hRes, _, _ := procCreateStreamOverRA.Call(
+		uintptr(unsafe.Pointer(raStream)),
+		uintptr(unsafe.Pointer(iidIStream)),
+		uintptr(unsafe.Pointer(&iStream)),
+	)
+	if hRes != 0 || iStream == nil {
+		return 0
+	}
+	defer iStream.Release()
+
+	var bitmap uintptr
+	hRes, _, _ = procGdipCreateBmpFromStm.Call(
+		uintptr(unsafe.Pointer(iStream)),
+		uintptr(unsafe.Pointer(&bitmap)),
+	)
+	if hRes != 0 || bitmap == 0 {
+		return 0
+	}
+
+	return bitmap
+}
+
+func DisposeThumbnail(bmp uintptr) {
+	if bmp != 0 {
+		procGdipDisposeImg.Call(bmp)
+	}
+}
+
 func FetchCurrent() (SessionInfo, error) {
 	roInit()
 
@@ -51,7 +127,6 @@ func FetchCurrent() (SessionInfo, error) {
 	}
 	defer asyncOp.Release()
 
-	// Poll GetResults (slot 8) until it succeeds (operation completes)
 	var mgr *ole.IInspectable
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -59,7 +134,7 @@ func FetchCurrent() (SessionInfo, error) {
 		if int32(hr) >= 0 {
 			break
 		}
-		if hr != 0x8000000E { // E_ILLEGAL_METHOD_CALL -> not ready
+		if hr != 0x8000000E {
 			return SessionInfo{}, fmt.Errorf("GetResults(manager) hr=%d", hr)
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -103,6 +178,7 @@ func FetchCurrent() (SessionInfo, error) {
 			info.Title, _ = getHString(props, 6)
 			info.Artist, _ = getHString(props, 9)
 			info.Album, _ = getHString(props, 10)
+			info.Thumbnail = FetchThumbnail(props)
 		}
 	}
 
@@ -137,6 +213,7 @@ type SessionInfo struct {
 	Status    int32
 	Position  time.Duration
 	Duration  time.Duration
+	Thumbnail uintptr
 }
 
 func FetchCurrentTitle() (string, error) {
@@ -147,8 +224,6 @@ func FetchCurrentTitle() (string, error) {
 	return info.Title, nil
 }
 
-// Control helpers. Slots per findings: 10 TryPlayAsync, 11 TryPauseAsync,
-// 16 TrySkipNextAsync, 17 TrySkipPreviousAsync, 20 TryTogglePlayPauseAsync.
 func control(session *ole.IInspectable, slotIdx int) {
 	if session == nil {
 		return
@@ -166,7 +241,6 @@ func Next(session *ole.IInspectable)  { control(session, 16) }
 func Prev(session *ole.IInspectable)  { control(session, 17) }
 func Toggle(session *ole.IInspectable) { control(session, 20) }
 
-// FetchSession returns the current session handle for control callers.
 func FetchSession() (*ole.IInspectable, error) {
 	roInit()
 	ins, err := ole.RoGetActivationFactory(

@@ -140,6 +140,7 @@ func main() {
 					Position:          info.Position,
 					Duration:          info.Duration,
 					PositionUpdatedAt: time.Now(),
+					Thumbnail:         info.Thumbnail,
 				}))
 				store.Send(app.Health("smtc", "ok"))
 			case <-lc.Context().Done():
@@ -195,10 +196,12 @@ func main() {
 		// background pill
 		r.FillRoundedRect(cx, cy, sz.W, sz.H, 18, render.RGBA(15, 15, 18, 220))
 		if state.Media.Available && sz.W > 300 {
-			// Album art placeholder box on the left
-			r.FillRoundedRect(cx+16, cy+18, 64, 64, 8, render.RGBA(35, 35, 45, 255))
-			// Music note or initial inside album art box (or subtle gradient background)
-			r.FillRoundedRect(cx+36, cy+38, 24, 24, 4, render.RGBA(60, 60, 80, 200))
+			if state.Media.Thumbnail != 0 {
+				r.DrawBitmap(state.Media.Thumbnail, cx+16, cy+18, 64, 64)
+			} else {
+				r.FillRoundedRect(cx+16, cy+18, 64, 64, 8, render.RGBA(35, 35, 45, 255))
+				r.FillRoundedRect(cx+36, cy+38, 24, 24, 4, render.RGBA(60, 60, 80, 200))
+			}
 
 			title := state.Media.Title
 			if len(title) > 34 {

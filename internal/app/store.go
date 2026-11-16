@@ -16,6 +16,7 @@ type MediaState struct {
 	Position         time.Duration
 	Duration         time.Duration
 	PositionUpdatedAt time.Time
+	Thumbnail        uintptr
 }
 
 // State is the immutable-ish application snapshot.
