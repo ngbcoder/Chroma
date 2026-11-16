@@ -227,7 +227,35 @@ Keep this file updated as work progresses. Commit and push frequently (small com
 
 ---
 
+## Milestone 6 — Linux support (future, currently non-goal per Design.md §1.2)
+
+### M6.0 Platform abstraction
+- [ ] Define build tags: `//go:build windows` for Win32/COM/WinRT code; `//go:build linux` for Linux path
+- [ ] Split platform-specific files (`*_windows.go`, `*_linux.go`)
+- [ ] Abstract window shell behind interface (layered window → X11/Wayland overlay)
+- [ ] Abstract media backend (SMTC → MPRIS via D-Bus)
+- [ ] Abstract audio (WASAPI → PulseAudio/PipeWire)
+- [ ] Abstract volume (IAudioEndpointVolume → PulseAudio/PipeWire)
+- [ ] Abstract Bluetooth battery (setupapi → UPower/BlueZ)
+- [ ] Config paths: `%APPDATA%` → `$XDG_CONFIG_HOME`/`~/.config`
+- [ ] Build + CI on Linux
+
+### M6.1 Linux media (MPRIS)
+- [ ] D-Bus client for MPRIS (org.mpris.MediaPlayer2)
+- [ ] Enumerate players, track current, send commands
+- [ ] Metadata mapping (xesam:title, xesam:artist, mpris:length, mpris:position)
+
+### M6.2 Linux windowing
+- [ ] X11 override-redirect layered window or Wayland surface
+- [ ] Click-through via input region
+- [ ] Multi-monitor via XRandR/Wayland outputs
+
+### M6.3 Packaging
+- [ ] .deb / .rpm / AppImage / Flatpak
+- [ ] systemd user service for autostart
+
 ## Open questions (from Design.md §18)
 - [ ] Music Radar recognition backend
 - [ ] License choice (MIT/GPL/MPL)
 - [ ] Settings UI: inside overlay vs separate window
+- [ ] Linux support scope and priority (non-goal in v1)
