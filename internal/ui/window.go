@@ -21,6 +21,10 @@ const (
 	wmDestroy       = 0x0002
 	wmPaint         = 0x000F
 	wmMouseActivate = 0x0021
+	wmLButtonDown  = 0x0201
+	wmMouseMove    = 0x0200
+	wmLButtonUp    = 0x0202
+	wmNCHitTest    = 0x0084
 
 	maNoActivate = 3
 
@@ -56,6 +60,9 @@ var (
 	procTranslateMessage   = user32.NewProc("TranslateMessage")
 	procDispatchMessageW   = user32.NewProc("DispatchMessageW")
 	procLoadCursorW        = user32.NewProc("LoadCursorW")
+	procGetWindowRect2     = user32.NewProc("GetWindowRect")
+	procSetWindowPos2      = user32.NewProc("SetWindowPos")
+	procGetCursorPos2      = user32.NewProc("GetCursorPos")
 
 	procCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
 	procCreateDIBSection   = gdi32.NewProc("CreateDIBSection")
@@ -133,6 +140,14 @@ type Window struct {
 	Width  int
 	Height int
 
+	OnClick func(x, y int)
+
+	// drag state
+	Dragging   bool
+	DragOffX   int
+	DragOffY   int
+	DidDrag    bool
+
 	className *uint16
 
 	memDC  uintptr
@@ -147,10 +162,45 @@ var (
 )
 
 func wndProcCallback(hwnd, msgUint, wParam, lParam uintptr) uintptr {
-	_, _ = windowsByHwnd[hwnd]
+	w, ok := windowsByHwnd[hwnd]
 	switch uint32(msgUint) {
 	case wmMouseActivate:
 		return maNoActivate
+	case wmLButtonDown:
+		if ok && w != nil {
+			// record drag offset
+			var pt struct{ X, Y int32 }
+			procGetCursorPos2.Call(uintptr(unsafe.Pointer(&pt)))
+			var rc struct{ L, T, R, B int32 }
+			procGetWindowRect2.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
+			w.DragOffX = int(pt.X) - int(rc.L)
+			w.DragOffY = int(pt.Y) - int(rc.T)
+			w.Dragging = true
+			w.DidDrag = false
+		}
+		return 0
+	case wmMouseMove:
+		if ok && w != nil && w.Dragging {
+			// check movement threshold
+			// move window
+			var pt struct{ X, Y int32 }
+			procGetCursorPos2.Call(uintptr(unsafe.Pointer(&pt)))
+			newX := int(pt.X) - w.DragOffX
+			newY := int(pt.Y) - w.DragOffY
+			w.DidDrag = true
+			procSetWindowPos2.Call(hwnd, 0, uintptr(newX), uintptr(newY), 0, 0, 0x0010|0x0001|0x0004) // SWP_NOZORDER|NOSIZE|NOACTIVATE
+		}
+		return 0
+	case wmLButtonUp:
+		if ok && w != nil {
+			if w.Dragging && !w.DidDrag && w.OnClick != nil {
+				x := int(int16(lParam & 0xFFFF))
+				y := int(int16((lParam >> 16) & 0xFFFF))
+				w.OnClick(x, y)
+			}
+			w.Dragging = false
+		}
+		return 0
 	case wmDestroy:
 		procPostQuitMessage.Call(0)
 		return 0
@@ -254,6 +304,14 @@ func (w *Window) ensureDIB() error {
 func (w *Window) Bits() uintptr { return w.bits }
 
 func (w *Window) Stride() int { return w.Width * 4 }
+
+// PresentAtCurrent uploads the DIB keeping the window's current position.
+func (w *Window) PresentAtCurrent() error {
+	// get current rect
+	var rc struct{ L, T, R, B int32 }
+	procGetWindowRect2.Call(w.Hwnd, uintptr(unsafe.Pointer(&rc)))
+	return w.Present(int(rc.L), int(rc.T))
+}
 
 // Present uploads the DIB to the layered window at (x,y).
 func (w *Window) Present(x, y int) error {

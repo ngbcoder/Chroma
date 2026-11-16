@@ -148,6 +148,7 @@ func main() {
 	start := time.Now()
 	_ = start
 	quit := false
+	firstFrame := true
 	for !quit {
 		if pumpMessages() {
 			quit = true
@@ -197,7 +198,12 @@ func main() {
 			dst := unsafe.Slice((*byte)(unsafe.Pointer(w.Bits())), len(r.Buf))
 			copy(dst, r.Buf)
 		}
-		w.Present(100, 50)
+		if firstFrame {
+			w.Present(100, 50)
+			firstFrame = false
+		} else {
+			w.PresentAtCurrent()
+		}
 
 		time.Sleep(16 * time.Millisecond)
 	}

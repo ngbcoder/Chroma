@@ -7,14 +7,15 @@ import (
 
 // MediaState is the media snapshot.
 type MediaState struct {
-	Available bool
-	SourceApp string
-	Title     string
-	Artist    string
-	Album     string
-	Status    int32
-	Position  time.Duration
-	Duration  time.Duration
+	Available        bool
+	SourceApp        string
+	Title            string
+	Artist           string
+	Album            string
+	Status           int32
+	Position         time.Duration
+	Duration         time.Duration
+	PositionUpdatedAt time.Time
 }
 
 // State is the immutable-ish application snapshot.
