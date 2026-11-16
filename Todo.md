@@ -95,8 +95,8 @@ Keep this file updated as work progresses. Commit and push frequently (small com
 ### M1.4 Media UI (expanded state)
 - [x] Render collapsed pill (190×36) with clock/idle fallback when no session
 - [x] Render expanded widget (420×140): title/artist, progress bar
-- [ ] Play/pause/next/prev buttons hit-testing + commands
-- [ ] Progress extrapolation from last known position + timestamp
+- [x] Play/pause/next/prev buttons hit-testing + commands
+- [x] Progress extrapolation from last known position + timestamp
 - [ ] Session cycling UI
 - [ ] Ambient artwork glow from dominant color (cache by track identity)
 - [x] Commit + push
