@@ -189,12 +189,19 @@ func main() {
 		cy := (float64(w.Height) - sz.H) / 2
 		// background pill
 		r.FillRoundedRect(cx, cy, sz.W, sz.H, 18, render.RGBA(15, 15, 18, 220))
-		if state.Media.Available {
-			r.DrawText(state.Media.Title, cx+12, cy+18, render.TextStyle{Size: 12, Color: render.RGB(255, 255, 255)})
-			r.DrawText(state.Media.Artist, cx+12, cy+36, render.TextStyle{Size: 11, Color: render.RGB(180, 180, 180)})
-			// extrapolate position (Chrome reports stale position, so use local timer)
+		if state.Media.Available && sz.W > 300 {
+			title := state.Media.Title
+			if len(title) > 46 {
+				title = title[:43] + "..."
+			}
+			r.DrawText(title, cx+12, cy+18, render.TextStyle{Size: 12, Color: render.RGB(255, 255, 255)})
+			artist := state.Media.Artist
+			if len(artist) > 46 {
+				artist = artist[:43] + "..."
+			}
+			r.DrawText(artist, cx+12, cy+36, render.TextStyle{Size: 11, Color: render.RGB(180, 180, 180)})
 			pos := basePos
-			if state.Media.Available && state.Media.Status != 2 && state.Media.Status != 0 {
+			if state.Media.Status != 2 && state.Media.Status != 0 {
 				pos += time.Since(baseTime)
 				if pos > state.Media.Duration {
 					pos = state.Media.Duration
@@ -214,6 +221,12 @@ func main() {
 				r.FillRoundedRect(cx+12, cy+sz.H-14, sz.W-24, 3, 1.5, render.RGBA(255, 255, 255, 60))
 				r.FillRoundedRect(cx+12, cy+sz.H-14, (sz.W-24)*frac, 3, 1.5, render.RGB(100, 180, 255))
 			}
+		} else if state.Media.Available {
+			title := state.Media.Title
+			if len(title) > 24 {
+				title = title[:21] + "..."
+			}
+			r.DrawText(title, cx+8, cy+12, render.TextStyle{Size: 10, Color: render.RGB(255, 255, 255)})
 		} else {
 			r.DrawText(time.Now().Format("15:04"), cx+12, cy+12, render.TextStyle{Size: 14, Color: render.RGB(255, 255, 255)})
 		}
