@@ -195,16 +195,31 @@ func main() {
 		// background pill
 		r.FillRoundedRect(cx, cy, sz.W, sz.H, 18, render.RGBA(15, 15, 18, 220))
 		if state.Media.Available && sz.W > 300 {
+			// Album art placeholder box on the left
+			r.FillRoundedRect(cx+16, cy+18, 64, 64, 8, render.RGBA(35, 35, 45, 255))
+			// Music note or initial inside album art box (or subtle gradient background)
+			r.FillRoundedRect(cx+36, cy+38, 24, 24, 4, render.RGBA(60, 60, 80, 200))
+
 			title := state.Media.Title
-			if len(title) > 42 {
-				title = title[:39] + "..."
+			if len(title) > 34 {
+				title = title[:31] + "..."
 			}
-			r.DrawText(title, cx+16, cy+22, render.TextStyle{Size: 13, Color: render.RGB(255, 255, 255)})
+			r.DrawText(title, cx+92, cy+20, render.TextStyle{Size: 13, Color: render.RGB(255, 255, 255)})
+
 			artist := state.Media.Artist
-			if len(artist) > 42 {
-				artist = artist[:43] + "..."
+			if len(artist) > 38 {
+				artist = artist[:35] + "..."
 			}
-			r.DrawText(artist, cx+16, cy+44, render.TextStyle{Size: 11, Color: render.RGB(180, 180, 180)})
+			r.DrawText(artist, cx+92, cy+42, render.TextStyle{Size: 11, Color: render.RGB(180, 180, 180)})
+
+			album := state.Media.Album
+			if album != "" && album != artist {
+				if len(album) > 38 {
+					album = album[:35] + "..."
+				}
+				r.DrawText(album, cx+92, cy+62, render.TextStyle{Size: 10, Color: render.RGB(130, 130, 145)})
+			}
+
 			pos := basePos
 			if state.Media.Status != 2 && state.Media.Status != 0 {
 				pos += time.Since(baseTime)
@@ -223,18 +238,28 @@ func main() {
 				if frac > 1 {
 					frac = 1
 				}
-				r.FillRoundedRect(cx+12, cy+sz.H-14, sz.W-24, 3, 1.5, render.RGBA(255, 255, 255, 60))
-				r.FillRoundedRect(cx+12, cy+sz.H-14, (sz.W-24)*frac, 3, 1.5, render.RGB(100, 180, 255))
+				r.FillRoundedRect(cx+16, cy+sz.H-16, sz.W-32, 4, 2, render.RGBA(255, 255, 255, 60))
+				r.FillRoundedRect(cx+16, cy+sz.H-16, (sz.W-32)*frac, 4, 2, render.RGB(100, 180, 255))
 			}
 		} else if state.Media.Available {
+			// Collapsed pill: Show Title & Artist stacked
 			title := state.Media.Title
-			if len(title) > 24 {
-				title = title[:21] + "..."
+			if len(title) > 22 {
+				title = title[:19] + "..."
 			}
-			textY := cy + (sz.H - 14) / 2
-			r.DrawText(title, cx, textY, render.TextStyle{
-				Size:      11,
+			artist := state.Media.Artist
+			if len(artist) > 22 {
+				artist = artist[:19] + "..."
+			}
+			r.DrawText(title, cx, cy+4, render.TextStyle{
+				Size:      10,
 				Color:     render.RGB(255, 255, 255),
+				Alignment: 1, // Center
+				Width:     sz.W,
+			})
+			r.DrawText(artist, cx, cy+20, render.TextStyle{
+				Size:      9,
+				Color:     render.RGB(170, 170, 185),
 				Alignment: 1, // Center
 				Width:     sz.W,
 			})
