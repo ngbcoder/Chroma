@@ -38,14 +38,20 @@ var (
 	procGdipDeleteStringFormat       = gdiplusDll.NewProc("GdipDeleteStringFormat")
 	procGdipSetStringFormatFlags     = gdiplusDll.NewProc("GdipSetStringFormatFlags")
 	procGdipSetStringFormatTrimming  = gdiplusDll.NewProc("GdipSetStringFormatTrimming")
+	procGdipSetStringFormatAlign     = gdiplusDll.NewProc("GdipSetStringFormatAlign")
 	procGdipDisposeImage             = gdiplusDll.NewProc("GdipDisposeImage")
 	procGdipBitmapLockBits           = gdiplusDll.NewProc("GdipBitmapLockBits")
 	procGdipBitmapUnlockBits         = gdiplusDll.NewProc("GdipBitmapUnlockBits")
+
+	procCreatePrivateFontCollection  = gdiplusDll.NewProc("GdiplusCreatePrivateFontCollection")
+	procDeletePrivateFontCollection  = gdiplusDll.NewProc("GdiplusDeletePrivateFontCollection")
+	procPrivateAddFontFile           = gdiplusDll.NewProc("GdiplusPrivateAddFontFile")
 
 	procAddFontResourceExW           = gdi32.NewProc("AddFontResourceExW")
 )
 
 var initialized bool
+var fontCollection uintptr
 
 type gdiplusStartupInput struct {
 	GdiplusVersion           uint32
@@ -58,13 +64,17 @@ func InitGDIPlus() error {
 	if initialized {
 		return nil
 	}
-	registerFonts()
 	input := gdiplusStartupInput{GdiplusVersion: 1}
 	var token uintptr
 	r, _, _ := procGdiplusStartup.Call(uintptr(unsafe.Pointer(&token)), uintptr(unsafe.Pointer(&input)), 0)
 	if r != 0 {
 		return fmt.Errorf("GdiplusStartup failed: 0x%x", r)
 	}
+
+	// Create private font collection
+	procCreatePrivateFontCollection.Call(uintptr(unsafe.Pointer(&fontCollection)))
+	registerFonts()
+
 	initialized = true
 	return nil
 }
@@ -78,8 +88,13 @@ func registerFonts() {
 	for _, f := range []string{"Doto-Regular.ttf", "BBH-Bogle-Regular.ttf"} {
 		p := filepath.Join(dir, "assets", "fonts", f)
 		if _, err := os.Stat(p); err == nil {
+			// Register with GDI
 			u, _ := syscall.UTF16PtrFromString(p)
 			procAddFontResourceExW.Call(uintptr(unsafe.Pointer(u)), 0x10, 0)
+			// Register with GDI+ PrivateFontCollection
+			if fontCollection != 0 {
+				procPrivateAddFontFile.Call(fontCollection, uintptr(unsafe.Pointer(u)))
+			}
 		}
 	}
 }
@@ -148,15 +163,28 @@ func (b *Backend) DrawImage(img image.Image, x, y float64) {}
 
 func (b *Backend) DrawText(text string, x, y float64, s render.TextStyle) {
 	u, _ := syscall.UTF16PtrFromString(text)
-	familyName, _ := syscall.UTF16PtrFromString("Doto")
+
+	// Try preferred font families, with robust fallbacks
+	candidates := []string{"Doto", "BBH Bogle", "Segoe UI", "Arial"}
 	if s.Bold {
-		familyName, _ = syscall.UTF16PtrFromString("BBH Bogle")
+		candidates = []string{"BBH Bogle", "Doto", "Segoe UI", "Arial"}
 	}
+
 	var family uintptr
-	r, _, _ := procGdipCreateFontFamilyFromName.Call(uintptr(unsafe.Pointer(familyName)), 0, uintptr(unsafe.Pointer(&family)))
-	if r != 0 || family == 0 {
-		familyName, _ = syscall.UTF16PtrFromString("Arial")
-		procGdipCreateFontFamilyFromName.Call(uintptr(unsafe.Pointer(familyName)), 0, uintptr(unsafe.Pointer(&family)))
+	for _, name := range candidates {
+		famName, _ := syscall.UTF16PtrFromString(name)
+		r, _, _ := procGdipCreateFontFamilyFromName.Call(uintptr(unsafe.Pointer(famName)), fontCollection, uintptr(unsafe.Pointer(&family)))
+		if r == 0 && family != 0 {
+			break
+		}
+	}
+	if family == 0 {
+		// Absolute fallback to system default
+		famName, _ := syscall.UTF16PtrFromString("Arial")
+		procGdipCreateFontFamilyFromName.Call(uintptr(unsafe.Pointer(famName)), 0, uintptr(unsafe.Pointer(&family)))
+	}
+	if family == 0 {
+		return // cannot draw text without family
 	}
 	defer procGdipDeleteFontFamily.Call(family)
 
@@ -176,11 +204,16 @@ func (b *Backend) DrawText(text string, x, y float64, s render.TextStyle) {
 	var format uintptr
 	procGdipCreateStringFormat.Call(0, 0, uintptr(unsafe.Pointer(&format)))
 	defer procGdipDeleteStringFormat.Call(format)
-	procGdipSetStringFormatFlags.Call(format, 0x00001000)
-	procGdipSetStringFormatTrimming.Call(format, 1)
+	procGdipSetStringFormatFlags.Call(format, 0x00001000) // NoWrap
+	procGdipSetStringFormatTrimming.Call(format, 1)        // EllipsisCharacter
+	procGdipSetStringFormatAlign.Call(format, uintptr(s.Alignment))
 
+	w := s.Width
+	if w <= 0 {
+		w = float64(b.W) - x
+	}
 	layout := struct{ X, Y, Width, Height float32 }{
-		X: float32(x), Y: float32(y), Width: float32(b.W) - float32(x), Height: float32(s.Size * 2),
+		X: float32(x), Y: float32(y), Width: float32(w), Height: float32(s.Size * 2.5),
 	}
 	procGdipDrawString.Call(b.graphics, uintptr(unsafe.Pointer(u)), uintptr(len(text)), font, uintptr(unsafe.Pointer(&layout)), format, brush)
 }
