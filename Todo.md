@@ -61,9 +61,10 @@ Keep this file updated as work progresses. Commit and push frequently (small com
 - [ ] Commit + push (SMTC bridge)
 
 ### M0.5 Frame pacing + fullscreen detection spike
-- [ ] `internal/system/*.go`: `DwmFlush` / waitable timer frame driver
-- [ ] `internal/system/*.go`: `SHQueryUserNotificationState` hide/minimal mode
-- [ ] `internal/system/*.go`: re-assert topmost on `WM_DISPLAYCHANGE`/`WM_SETTINGCHANGE`
+- [x] `internal/system/*.go`: `DwmFlush` frame driver + fallback
+- [x] `internal/system/*.go`: `SHQueryUserNotificationState` hide/minimal mode
+- [x] `internal/system/*.go`: re-assert topmost helper
+- [ ] `WM_DISPLAYCHANGE`/`WM_SETTINGCHANGE` wiring in window proc
 - [ ] Commit + push
 
 ---
