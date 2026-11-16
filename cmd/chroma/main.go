@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"runtime"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -12,6 +13,36 @@ import (
 	"github.com/ngbcoder/Chroma/internal/render/raster"
 	"github.com/ngbcoder/Chroma/internal/ui"
 )
+
+type msgW struct {
+	Hwnd    uintptr
+	Message uint32
+	WParam  uintptr
+	LParam  uintptr
+	Time    uint32
+	Pt      struct{ X, Y int32 }
+}
+
+var (
+	procPeekMessageW2     = syscall.NewLazyDLL("user32.dll").NewProc("PeekMessageW")
+	procTranslateMessage2 = syscall.NewLazyDLL("user32.dll").NewProc("TranslateMessage")
+	procDispatchMessageW2 = syscall.NewLazyDLL("user32.dll").NewProc("DispatchMessageW")
+)
+
+func pumpMessages() bool {
+	for {
+		var m msgW
+		r, _, _ := procPeekMessageW2.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0, 1)
+		if r == 0 {
+			return false
+		}
+		if m.Message == 0x0012 { // WM_QUIT
+			return true
+		}
+		procTranslateMessage2.Call(uintptr(unsafe.Pointer(&m)))
+		procDispatchMessageW2.Call(uintptr(unsafe.Pointer(&m)))
+	}
+}
 
 func main() {
 	runtime.LockOSThread()
@@ -32,6 +63,45 @@ func main() {
 	dwell.CollapseDelay = 400 * time.Millisecond
 	dwell.OnExpand = func() { layout.GoTo(ui.StateExpanded) }
 	dwell.OnCollapse = func() { layout.GoTo(ui.StateCollapsed) }
+
+	w.OnClick = func(x, y int) {
+		sz := layout.SizeNow()
+		if sz.W < 300 {
+			return
+		}
+		cx := (float64(w.Width) - sz.W) / 2
+		cy := (float64(w.Height) - sz.H) / 2
+		by := cy + sz.H - 30
+		if float64(y) < by || float64(y) > by+20 {
+			return
+		}
+		if float64(x) >= cx+sz.W/2-40 && float64(x) <= cx+sz.W/2-20 {
+			if s, err := media.FetchSession(); err == nil {
+				media.Prev(s)
+				s.Release()
+			}
+			return
+		}
+		if float64(x) >= cx+sz.W/2-10 && float64(x) <= cx+sz.W/2+10 {
+			st := store.State()
+			if s, err := media.FetchSession(); err == nil {
+				if st.Media.Status == 3 {
+					media.Pause(s)
+				} else {
+					media.Play(s)
+				}
+				s.Release()
+			}
+			return
+		}
+		if float64(x) >= cx+sz.W/2+20 && float64(x) <= cx+sz.W/2+40 {
+			if s, err := media.FetchSession(); err == nil {
+				media.Next(s)
+				s.Release()
+			}
+			return
+		}
+	}
 
 	poller := ui.NewCursorPoller(dwell, func(x, y int) bool {
 		// hot-zone around top-center of primary screen (generous)
@@ -56,14 +126,15 @@ func main() {
 					continue
 				}
 				store.Send(app.MediaUpdate(app.MediaState{
-					Available: true,
-					SourceApp: info.SourceApp,
-					Title:     info.Title,
-					Artist:    info.Artist,
-					Album:     info.Album,
-					Status:    info.Status,
-					Position:  info.Position,
-					Duration:  info.Duration,
+					Available:         true,
+					SourceApp:         info.SourceApp,
+					Title:             info.Title,
+					Artist:            info.Artist,
+					Album:             info.Album,
+					Status:            info.Status,
+					Position:          info.Position,
+					Duration:          info.Duration,
+					PositionUpdatedAt: time.Now(),
 				}))
 				store.Send(app.Health("smtc", "ok"))
 			case <-lc.Context().Done():
@@ -76,14 +147,12 @@ func main() {
 	// Main loop: pump messages + drive frames
 	start := time.Now()
 	_ = start
-	for {
-		// pump
-		// (inline peek)
-		// We'll just sleep and let OS handle messages via a separate goroutine? 
-		// Simpler: call RunMessagePump would block. Instead, peek.
-		// Use a non-blocking pump via ui package? We'll inline.
-		// PeekMessage loop
-		// (omitted for brevity; messages handled by default proc)
+	quit := false
+	for !quit {
+		if pumpMessages() {
+			quit = true
+			break
+		}
 
 		state := store.State()
 		// advance layout
@@ -100,8 +169,16 @@ func main() {
 		if state.Media.Available {
 			r.DrawText(state.Media.Title, cx+12, cy+18, render.TextStyle{Size: 12, Color: render.RGB(255, 255, 255)})
 			r.DrawText(state.Media.Artist, cx+12, cy+36, render.TextStyle{Size: 11, Color: render.RGB(180, 180, 180)})
+			// extrapolate position while playing
+			pos := state.Media.Position
+			if state.Media.Status == 3 && !state.Media.PositionUpdatedAt.IsZero() {
+				pos += time.Since(state.Media.PositionUpdatedAt)
+				if pos > state.Media.Duration {
+					pos = state.Media.Duration
+				}
+			}
 			if state.Media.Duration > 0 {
-				frac := float64(state.Media.Position) / float64(state.Media.Duration)
+				frac := float64(pos) / float64(state.Media.Duration)
 				if frac < 0 {
 					frac = 0
 				}
